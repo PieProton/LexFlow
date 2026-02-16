@@ -1,3 +1,4 @@
+const { autoUpdater } = require('electron-updater');
 const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, dialog, clipboard, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -165,6 +166,7 @@ ipcMain.on('window-close', () => { if (mainWindow && !mainWindow.isDestroyed()) 
 
 // ===== Window =====
 function createWindow() {
+  mainWindow.setContentProtection(true);
   mainWindow = new BrowserWindow({
     width: 1280, height: 800, minWidth: 1000, minHeight: 700,
     title: 'LexFlow',
@@ -275,7 +277,17 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_, __, callback) => callback(false));
   buildMenu();
   createWindow();
-  createTray();
+  
+  // AUTO-UPDATE CHECK
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify();
+  }
 });
-app.on('window-all-closed', () => { if (!IS_MAC) app.quit(); });
-app.on('activate', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } else createWindow(); });
+
+// Eventi opzionali per loggare lo stato dell'update
+autoUpdater.on('update-available', () => {
+  if(mainWindow) mainWindow.webContents.send('update-msg', 'Aggiornamento disponibile...');
+});
+autoUpdater.on('update-downloaded', () => {
+  if(mainWindow) mainWindow.webContents.send('update-msg', 'Aggiornamento scaricato. Riavvia per installare.');
+});
