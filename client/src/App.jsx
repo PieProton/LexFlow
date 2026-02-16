@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Toaster } from 'react-hot-toast';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { Lock } from 'lucide-react'; // Importiamo l'icona Lock
+
 import LoginScreen from './components/LoginScreen';
 import Sidebar from './components/Sidebar';
 import WindowControls from './components/WindowControls';
@@ -16,19 +18,17 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Stati per la gestione del vault e della privacy
   const [isLocked, setIsLocked] = useState(true);
   const [blurred, setBlurred] = useState(false);
   const [privacyEnabled, setPrivacyEnabled] = useState(true);
   
-  // Stati per i dati dell'applicazione
   const [practices, setPractices] = useState([]);
   const [agendaEvents, setAgendaEvents] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [version, setVersion] = useState('');
 
-  // 1. Caricamento impostazioni iniziali e versione
+  // 1. Init
   useEffect(() => {
     window.api?.getSettings?.().then(s => {
       if (s && typeof s.privacyBlurEnabled === 'boolean') {
@@ -39,7 +39,7 @@ export default function App() {
     window.api?.getAppVersion?.().then(v => setVersion(v || ''));
   }, []);
 
-  // 2. Listener per l'oscuramento della privacy (Blur)
+  // 2. Privacy Blur Listener
   useEffect(() => {
     if (!window.api?.onBlur) return;
     window.api.onBlur((val) => {
@@ -47,7 +47,7 @@ export default function App() {
     });
   }, [privacyEnabled]);
 
-  // 3. Gestione del blocco (Locale e da segnali esterni)
+  // 3. Lock Logic
   const handleLockLocal = useCallback(async () => {
     setBlurred(false);
     setPractices([]);
@@ -69,7 +69,7 @@ export default function App() {
     window.api.onVaultLocked(handleLockLocal);
   }, [handleLockLocal]);
 
-  // 4. Sincronizzazione automatica Scadenze -> Agenda
+  // 4. Sync
   const syncDeadlinesToAgenda = useCallback((newPractices, currentAgenda) => {
     const manualEvents = currentAgenda.filter(e => !e.autoSync);
     const syncedEvents = [];
@@ -92,7 +92,7 @@ export default function App() {
     return [...manualEvents, ...syncedEvents];
   }, []);
 
-  // 5. Caricamento e salvataggio dati cifrati
+  // 5. Load/Save
   const loadAllData = useCallback(async () => {
     try {
       const pracs = await window.api.loadPractices().catch(() => []) || [];
@@ -118,7 +118,7 @@ export default function App() {
     await window.api.saveAgenda(newEvents);
   };
 
-  // 6. Gestione sblocco e blocco manuale
+  // 6. Actions
   const handleUnlock = async () => {
     setBlurred(false);
     setIsLocked(false);
@@ -135,7 +135,6 @@ export default function App() {
     navigate('/pratiche');
   };
 
-  // Se l'app è bloccata, mostra solo la schermata di login
   if (isLocked) {
     return (
       <>
@@ -149,29 +148,28 @@ export default function App() {
 
   return (
     <div className="app-layout">
-      {/* Privacy Shield (Blur protettivo) */}
+      {/* Privacy Shield (Blur protettivo) AGGIORNATO CON ICONA */}
       {privacyEnabled && blurred && (
         <div 
-          className="fixed inset-0 z-[9999] bg-[#0c0d14]/60 backdrop-blur-2xl flex items-center justify-center transition-opacity duration-300 cursor-pointer"
+          className="fixed inset-0 z-[9999] bg-[#0c0d14]/80 backdrop-blur-3xl flex items-center justify-center transition-opacity duration-300 cursor-pointer"
           onClick={handleLock}
         >
           <div className="text-center">
-            <div className="w-20 h-20 bg-primary/20 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
-              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#d4a940" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse border border-primary/20">
+              <Lock size={40} className="text-primary" />
             </div>
-            <h2 className="text-2xl font-bold text-white">Protetto</h2>
-            <p className="text-text-muted text-xs mt-2">Clicca per sbloccare</p>
+            <h2 className="text-2xl font-bold text-white tracking-tight">LexFlow Protetto</h2>
+            <p className="text-text-muted text-sm mt-2">L'applicazione è offuscata per privacy.<br/>Clicca per bloccare completamente.</p>
           </div>
         </div>
       )}
 
-      {/* Sidebar con tasto Blocca Vault integrato */}
       <Sidebar 
         version={version} 
         onLock={handleLock} 
       />
 
-      <main className="flex-1 h-screen overflow-hidden relative">
+      <main className="flex-1 h-screen overflow-hidden relative flex flex-col">
         <WindowControls />
         <Toaster
           position="bottom-right"
@@ -180,55 +178,55 @@ export default function App() {
           }}
         />
 
-        <Routes>
-          <Route path="/" element={
-            <Dashboard
-              practices={practices}
-              onNavigate={navigate}
-              onSelectPractice={handleSelectPractice}
-              onNewPractice={() => setShowCreate(true)}
-            />
-          } />
-          
-          <Route path="/pratiche" element={
-            selectedId && selectedPractice ? (
-              <PracticeDetail
-                practice={selectedPractice}
-                onBack={() => setSelectedId(null)}
-                onUpdate={(up) => {
-                  const newList = practices.map(p => p.id === up.id ? up : p);
-                  savePractices(newList);
-                }}
-              />
-            ) : (
-              <PracticesList
+        <div className="flex-1 overflow-hidden relative">
+          <Routes>
+            <Route path="/" element={
+              <Dashboard
                 practices={practices}
-                onSelect={handleSelectPractice}
+                onNavigate={navigate}
+                onSelectPractice={handleSelectPractice}
                 onNewPractice={() => setShowCreate(true)}
               />
-            )
-          } />
-          
-          <Route path="/scadenze" element={
-            <DeadlinesPage practices={practices} onSelectPractice={handleSelectPractice} />
-          } />
-          
-          <Route path="/agenda" element={
-            <AgendaPage
-              agendaEvents={agendaEvents}
-              onSaveAgenda={saveAgenda}
-              practices={practices}
-              onSelectPractice={handleSelectPractice}
-            />
-          } />
-          
-          {/* Rotta unificata per Impostazioni e Sicurezza */}
-          <Route path="/settings" element={<SettingsPage onLock={handleLock} />} />
-          <Route path="/sicurezza" element={<SettingsPage onLock={handleLock} />} />
-        </Routes>
+            } />
+            
+            <Route path="/pratiche" element={
+              selectedId && selectedPractice ? (
+                <PracticeDetail
+                  practice={selectedPractice}
+                  onBack={() => setSelectedId(null)}
+                  onUpdate={(up) => {
+                    const newList = practices.map(p => p.id === up.id ? up : p);
+                    savePractices(newList);
+                  }}
+                />
+              ) : (
+                <PracticesList
+                  practices={practices}
+                  onSelect={handleSelectPractice}
+                  onNewPractice={() => setShowCreate(true)}
+                />
+              )
+            } />
+            
+            <Route path="/scadenze" element={
+              <DeadlinesPage practices={practices} onSelectPractice={handleSelectPractice} />
+            } />
+            
+            <Route path="/agenda" element={
+              <AgendaPage
+                agendaEvents={agendaEvents}
+                onSaveAgenda={saveAgenda}
+                practices={practices}
+                onSelectPractice={handleSelectPractice}
+              />
+            } />
+            
+            <Route path="/settings" element={<SettingsPage onLock={handleLock} />} />
+            <Route path="/sicurezza" element={<SettingsPage onLock={handleLock} />} />
+          </Routes>
+        </div>
       </main>
 
-      {/* Modale creazione fascicolo */}
       {showCreate && (
         <CreatePracticeModal
           onClose={() => setShowCreate(false)}

@@ -1,12 +1,18 @@
 const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, dialog, clipboard, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto'); // Necessario per il backup
+const crypto = require('crypto');
 const keychainService = require('./services/keychain');
 const storage = require('./storage');
 const biometrics = require('./biometrics');
 
 const IS_MAC = process.platform === 'darwin';
+
+// --- 1. GESTIONE ERRORI GLOBALE (Previene crash inattesi) ---
+process.on('uncaughtException', (error) => {
+  console.error('CRITICAL ERROR:', error);
+  // In produzione potresti voler loggare su file o mostrare un dialog
+});
 
 // Menu translations
 const menuT = {
@@ -36,11 +42,10 @@ ipcMain.handle('vault-load-agenda', () => storage.loadAgenda());
 ipcMain.handle('vault-save-agenda', (_, data) => storage.saveAgenda(data));
 ipcMain.handle('vault-recovery-reset', (_, code) => storage.resetWithRecovery(code));
 
-// NUOVO: Export Backup Portatile
+// Export Backup Portatile
 ipcMain.handle('vault-export', async (_, exportPassword) => {
   if (!mainWindow) return { success: false };
   
-  // 1. Chiedi dove salvare
   const { filePath } = await dialog.showSaveDialog(mainWindow, {
     title: 'Esporta Backup Portatile',
     defaultPath: `LexFlow_Backup_${new Date().toISOString().split('T')[0]}.lex`,
@@ -50,7 +55,6 @@ ipcMain.handle('vault-export', async (_, exportPassword) => {
   if (!filePath) return { success: false, cancelled: true };
 
   try {
-    // 2. Carica i dati decriptati attuali
     const practices = await storage.loadData();
     const agenda = await storage.loadAgenda();
     const backupData = JSON.stringify({ 
@@ -60,7 +64,6 @@ ipcMain.handle('vault-export', async (_, exportPassword) => {
       appVersion: app.getVersion() 
     });
 
-    // 3. Cripta con la password scelta dall'utente (NON legata all'hardware)
     const salt = crypto.randomBytes(16);
     const key = crypto.pbkdf2Sync(exportPassword, salt, 100000, 32, 'sha256');
     const iv = crypto.randomBytes(16);
@@ -70,7 +73,6 @@ ipcMain.handle('vault-export', async (_, exportPassword) => {
     encrypted += cipher.final('hex');
     const authTag = cipher.getAuthTag();
 
-    // 4. Salva su file
     const output = JSON.stringify({
       v: 1,
       salt: salt.toString('hex'),
@@ -110,7 +112,34 @@ ipcMain.handle('select-folder', async () => {
   if (result.canceled) return null;
   return result.filePaths[0];
 });
-ipcMain.handle('open-path', (_, p) => { if (p) shell.openPath(p); });
+
+// --- 2. OPEN PATH SICURO ---
+ipcMain.handle('open-path', async (_, p) => { 
+  if (!p || typeof p !== 'string') return;
+  const normalized = path.normalize(p);
+  // Verifica esistenza per evitare errori shell
+  if (fs.existsSync(normalized)) {
+    await shell.openPath(normalized); 
+  }
+});
+
+// --- 3. EXPORT PDF SICURO (Nuovo Handler) ---
+ipcMain.handle('save-file-buffer', async (_, { filePath, buffer }) => {
+  try {
+    // Scrive il buffer (ricevuto dal renderer) su disco
+    await fs.promises.writeFile(filePath, Buffer.from(buffer));
+    return { success: true };
+  } catch (e) {
+    console.error('Save error:', e);
+    return { success: false, error: e.message };
+  }
+});
+ipcMain.handle('show-save-dialog', async (_, options) => {
+  const { filePath } = await dialog.showSaveDialog(mainWindow, options);
+  return filePath;
+});
+
+
 ipcMain.handle('get-platform', () => process.platform);
 ipcMain.handle('get-is-mac', () => IS_MAC);
 ipcMain.handle('get-app-version', () => app.getVersion());
@@ -146,7 +175,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
-      contextIsolation: true,
+      contextIsolation: true, // Importante per la sicurezza
       sandbox: true,
       backgroundThrottling: true,
       spellcheck: false,
@@ -185,7 +214,7 @@ function createWindow() {
   });
 
   mainWindow.on('close', (e) => {
-    clipboard.clear(); // Pulisce clipboard alla chiusura
+    clipboard.clear(); 
     storage.lockVault();
     if (IS_MAC && !isQuitting) {
       e.preventDefault();

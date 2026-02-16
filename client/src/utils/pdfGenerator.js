@@ -157,26 +157,28 @@ export async function generatePracticePDF(practice) {
 }
 
 export async function exportPracticePDF(practice) {
-  const doc = await generatePracticePDF(practice);
-  const clientSafe = (practice.client || 'fascicolo').replace(/[^a-zA-Z0-9àèéìòù ]/g, '').trim().replace(/\s+/g, '_');
+  try {
+    const doc = await generatePracticePDF(practice);
+    const clientSafe = (practice.client || 'fascicolo').replace(/[^a-zA-Z0-9àèéìòù ]/g, '').trim().replace(/\s+/g, '_');
 
-  const filePath = await window.api.showSaveDialog({
-    defaultPath: `LexFlow_${clientSafe}.pdf`,
-    filters: [{ name: 'PDF', extensions: ['pdf'] }],
-  });
+    // 1. Chiede all'utente dove salvare
+    const filePath = await window.api.showSaveDialog({
+      defaultPath: `LexFlow_${clientSafe}_${new Date().toISOString().split('T')[0]}.pdf`,
+      filters: [{ name: 'Documento PDF', extensions: ['pdf'] }],
+    });
 
-  if (filePath) {
-    const pdfData = doc.output('arraybuffer');
-    const fs = require?.('fs');
-    // In renderer, write via Uint8Array
-    const blob = doc.output('blob');
-    const arrayBuf = await blob.arrayBuffer();
-    const buffer = new Uint8Array(arrayBuf);
+    if (!filePath) return false; // Utente ha annullato
 
-    // Use a workaround: convert to data URL and let main process write
-    // Actually jsPDF can save directly
-    doc.save(filePath);
-    return true;
+    // 2. Genera il buffer del PDF
+    const arrayBuffer = doc.output('arraybuffer');
+
+    // 3. Invia il buffer al Main process per la scrittura fisica su disco
+    // Questo aggira i limiti di sicurezza del renderer
+    const result = await window.api.saveFileBuffer(filePath, arrayBuffer);
+
+    return result.success;
+  } catch (error) {
+    console.error("Errore export PDF:", error);
+    return false;
   }
-  return false;
 }
