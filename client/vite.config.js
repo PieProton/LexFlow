@@ -3,8 +3,8 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  base: './',
+  plugins: [react()],
+  base: './', // FONDAMENTALE per Electron build
   build: {
     outDir: 'dist',
     minify: 'terser',

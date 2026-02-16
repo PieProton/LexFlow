@@ -186,7 +186,7 @@ function createWindow() {
     show: false,
   });
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'client', 'dist', 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, '../client/dist/index.html'));
   mainWindow.once('ready-to-show', () => mainWindow.show());
 
   if (app.isPackaged) {
