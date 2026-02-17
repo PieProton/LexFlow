@@ -71,7 +71,6 @@
     "asar": true
   },
   "dependencies": {
-    "better-sqlite3-multiple-ciphers": "^12.6.2",
     "electron-updater": "^6.7.3",
     "i18next": "^25.8.10",
     "i18next-browser-languagedetector": "^8.2.1",
