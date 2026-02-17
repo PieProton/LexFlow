@@ -3,8 +3,14 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  plugins: [react()],
-  base: './', // FONDAMENTALE per Electron build
+  plugins: [
+    react(), 
+    tailwindcss()
+  ],
+  base: './', 
+  resolve: {
+    dedupe: ['react', 'react-dom'], 
+  }, // <--- AGGIUNTA VIRGOLA QUI
   build: {
     outDir: 'dist',
     minify: 'terser',

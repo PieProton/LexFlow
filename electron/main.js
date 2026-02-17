@@ -1,5 +1,5 @@
-const { autoUpdater } = require('electron-updater');
 const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, dialog, clipboard, session } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -9,18 +9,21 @@ const biometrics = require('./biometrics');
 
 const IS_MAC = process.platform === 'darwin';
 
-// --- 1. GESTIONE ERRORI GLOBALE (Previene crash inattesi) ---
+// --- 1. GESTIONE ERRORI GLOBALE ---
 process.on('uncaughtException', (error) => {
   console.error('CRITICAL ERROR:', error);
-  // In produzione potresti voler loggare su file o mostrare un dialog
 });
 
-// Menu translations
+// Traduzioni per il Menu di sistema
 const menuT = {
   it: { about: 'Informazioni su LexFlow', hide: 'Nascondi LexFlow', hideOthers: 'Nascondi altri', showAll: 'Mostra tutti', quit: 'Esci da LexFlow', edit: 'Modifica', undo: 'Annulla', redo: 'Ripeti', cut: 'Taglia', copy: 'Copia', paste: 'Incolla', selectAll: 'Seleziona tutto', view: 'Vista', zoomIn: 'Zoom avanti', zoomOut: 'Zoom indietro', resetZoom: 'Zoom predefinito', fullscreen: 'Schermo intero', window: 'Finestra', minimize: 'Riduci', close: 'Chiudi' },
   en: { about: 'About LexFlow', hide: 'Hide LexFlow', hideOthers: 'Hide Others', showAll: 'Show All', quit: 'Quit LexFlow', edit: 'Edit', undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste', selectAll: 'Select All', view: 'View', zoomIn: 'Zoom In', zoomOut: 'Zoom Out', resetZoom: 'Actual Size', fullscreen: 'Toggle Full Screen', window: 'Window', minimize: 'Minimize', close: 'Close' },
 };
-function getT() { const l = (app.getLocale() || 'en').substring(0, 2); return menuT[l] || menuT.en; }
+
+function getT() { 
+  const l = (app.getLocale() || 'en').substring(0, 2); 
+  return menuT[l] || menuT.en; 
+}
 
 app.setAppUserModelId('com.technojaw.lexflow');
 
@@ -30,10 +33,8 @@ let isQuitting = false;
 
 // ===== IPC Handlers =====
 
-// Security
+// Security & Vault
 ipcMain.handle('get-secure-key', () => keychainService.getEncryptionKey());
-
-// Vault
 ipcMain.handle('vault-exists', () => storage.isVaultCreated());
 ipcMain.handle('vault-unlock', (_, pwd) => storage.unlockVault(pwd));
 ipcMain.handle('vault-lock', () => storage.lockVault());
@@ -43,7 +44,7 @@ ipcMain.handle('vault-load-agenda', () => storage.loadAgenda());
 ipcMain.handle('vault-save-agenda', (_, data) => storage.saveAgenda(data));
 ipcMain.handle('vault-recovery-reset', (_, code) => storage.resetWithRecovery(code));
 
-// Export Backup Portatile
+// Esportazione Backup Portatile (.lex)
 ipcMain.handle('vault-export', async (_, exportPassword) => {
   if (!mainWindow) return { success: false };
   
@@ -90,6 +91,7 @@ ipcMain.handle('vault-export', async (_, exportPassword) => {
   }
 });
 
+// Reset Vault
 ipcMain.handle('vault-reset', async () => {
   const { response } = await dialog.showMessageBox(mainWindow, {
     type: 'warning',
@@ -107,45 +109,38 @@ ipcMain.handle('vault-reset', async () => {
   return { success: false };
 });
 
-// Utils
+// File System Utils
 ipcMain.handle('select-folder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
-  if (result.canceled) return null;
-  return result.filePaths[0];
+  return result.canceled ? null : result.filePaths[0];
 });
 
-// --- 2. OPEN PATH SICURO ---
 ipcMain.handle('open-path', async (_, p) => { 
   if (!p || typeof p !== 'string') return;
   const normalized = path.normalize(p);
-  // Verifica esistenza per evitare errori shell
   if (fs.existsSync(normalized)) {
     await shell.openPath(normalized); 
   }
 });
 
-// --- 3. EXPORT PDF SICURO (Nuovo Handler) ---
 ipcMain.handle('save-file-buffer', async (_, { filePath, buffer }) => {
   try {
-    // Scrive il buffer (ricevuto dal renderer) su disco
     await fs.promises.writeFile(filePath, Buffer.from(buffer));
     return { success: true };
   } catch (e) {
-    console.error('Save error:', e);
     return { success: false, error: e.message };
   }
 });
+
 ipcMain.handle('show-save-dialog', async (_, options) => {
   const { filePath } = await dialog.showSaveDialog(mainWindow, options);
   return filePath;
 });
 
-
+// App Info & Biometria
 ipcMain.handle('get-platform', () => process.platform);
 ipcMain.handle('get-is-mac', () => IS_MAC);
 ipcMain.handle('get-app-version', () => app.getVersion());
-
-// Biometrics
 ipcMain.handle('bio-check', () => biometrics.isAvailable());
 ipcMain.handle('bio-has-saved', () => biometrics.hasSaved());
 ipcMain.handle('bio-save', (_, pwd) => biometrics.savePassword(pwd));
@@ -157,16 +152,14 @@ ipcMain.handle('get-settings', () => storage.getSettings());
 ipcMain.handle('save-settings', (_, data) => storage.saveSettings(data));
 
 // Window controls
-ipcMain.on('window-minimize', () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize(); });
+ipcMain.on('window-minimize', () => { if (mainWindow) mainWindow.minimize(); });
 ipcMain.on('window-maximize', () => {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
+  if (mainWindow) mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
 });
-ipcMain.on('window-close', () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close(); });
+ipcMain.on('window-close', () => { if (mainWindow) mainWindow.close(); });
 
-// ===== Window =====
+// ===== Window Management =====
 function createWindow() {
-  mainWindow.setContentProtection(true);
   mainWindow = new BrowserWindow({
     width: 1280, height: 800, minWidth: 1000, minHeight: 700,
     title: 'LexFlow',
@@ -177,7 +170,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
-      contextIsolation: true, // Importante per la sicurezza
+      contextIsolation: true,
       sandbox: true,
       backgroundThrottling: true,
       spellcheck: false,
@@ -186,19 +179,26 @@ function createWindow() {
     show: false,
   });
 
-  mainWindow.loadFile(path.join(__dirname, '../client/dist/index.html'));
+  // Protezione anti-screenshot
+  mainWindow.setContentProtection(true);
+
+  // Caricamento del build di Vite
+  mainWindow.loadFile(path.join(__dirname, '..', 'client', 'dist', 'index.html'));
+  
   mainWindow.once('ready-to-show', () => mainWindow.show());
 
   if (app.isPackaged) {
     mainWindow.webContents.on('devtools-opened', () => mainWindow.webContents.closeDevTools());
+    autoUpdater.checkForUpdatesAndNotify();
   }
 
+  // Sicurezza e Navigazione
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (url !== mainWindow.webContents.getURL()) event.preventDefault();
   });
 
-  // Privacy Blur Logic
+  // Logica Privacy Blur
   let blurTimer = null;
   let blurTimestamp = 0;
   mainWindow.on('blur', () => {
@@ -234,8 +234,11 @@ function createTray() {
   const trayIconPath = path.join(__dirname, '..', 'build', 'lexflow-tray.png');
   const trayIcon2xPath = path.join(__dirname, '..', 'build', 'lexflow-tray@2x.png');
   if (!fs.existsSync(trayIconPath)) return;
+  
   const icon = nativeImage.createFromPath(trayIconPath).resize({ width: 18, height: 18 });
-  if (fs.existsSync(trayIcon2xPath)) icon.addRepresentation({ scaleFactor: 2.0, dataURL: nativeImage.createFromPath(trayIcon2xPath).toDataURL() });
+  if (fs.existsSync(trayIcon2xPath)) {
+    icon.addRepresentation({ scaleFactor: 2.0, dataURL: nativeImage.createFromPath(trayIcon2xPath).toDataURL() });
+  }
   
   tray = new Tray(icon);
   tray.setToolTip('LexFlow');
@@ -268,6 +271,7 @@ function buildMenu() {
 }
 
 app.on('before-quit', () => { isQuitting = true; });
+
 app.whenReady().then(() => {
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
     const url = details.url.toLowerCase();
@@ -275,19 +279,15 @@ app.whenReady().then(() => {
     else callback({ cancel: true });
   });
   session.defaultSession.setPermissionRequestHandler((_, __, callback) => callback(false));
+  
   buildMenu();
   createWindow();
-  
-  // AUTO-UPDATE CHECK
-  if (app.isPackaged) {
-    autoUpdater.checkForUpdatesAndNotify();
-  }
+  createTray();
 });
 
-// Eventi opzionali per loggare lo stato dell'update
-autoUpdater.on('update-available', () => {
-  if(mainWindow) mainWindow.webContents.send('update-msg', 'Aggiornamento disponibile...');
-});
-autoUpdater.on('update-downloaded', () => {
-  if(mainWindow) mainWindow.webContents.send('update-msg', 'Aggiornamento scaricato. Riavvia per installare.');
-});
+app.on('window-all-closed', () => { if (!IS_MAC) app.quit(); });
+app.on('activate', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } else createWindow(); });
+
+// Messaggi di aggiornamento
+autoUpdater.on('update-available', () => { if(mainWindow) mainWindow.webContents.send('update-msg', 'Aggiornamento disponibile...'); });
+autoUpdater.on('update-downloaded', () => { if(mainWindow) mainWindow.webContents.send('update-msg', 'Aggiornamento pronto. Riavvia per installare.'); });
