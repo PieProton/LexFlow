@@ -1,55 +1,58 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Toaster } from 'react-hot-toast';
-import { Routes, Route, useNavigate } from 'react-router-dom';
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { Lock } from 'lucide-react';
 
+// Componenti
 import LoginScreen from './components/LoginScreen';
 import Sidebar from './components/Sidebar';
 import WindowControls from './components/WindowControls';
+import PracticeDetail from './components/PracticeDetail';
+import CreatePracticeModal from './components/CreatePracticeModal';
+import ErrorBoundary from './ErrorBoundary';
+
+// Pagine
 import Dashboard from './pages/Dashboard';
 import PracticesList from './pages/PracticesList';
 import DeadlinesPage from './pages/DeadlinesPage';
 import AgendaPage from './pages/AgendaPage';
 import SettingsPage from './pages/SettingsPage';
-import PracticeDetail from './components/PracticeDetail';
-import CreatePracticeModal from './components/CreatePracticeModal';
 
 export default function App() {
   const navigate = useNavigate();
+  const location = useLocation();
   
-  // --- Stati Globali ---
+  // --- STATI GLOBALI DI SICUREZZA ---
   const [isLocked, setIsLocked] = useState(true);
   const [blurred, setBlurred] = useState(false);
   const [privacyEnabled, setPrivacyEnabled] = useState(true);
   const [version, setVersion] = useState('');
   
-  // --- Stati Dati (Lifted State) ---
+  // --- STATI DEI DATI (LIFTED STATE) ---
   const [practices, setPractices] = useState([]);
   const [agendaEvents, setAgendaEvents] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
 
-  // --- 1. Inizializzazione ---
+  // --- 1. INIZIALIZZAZIONE ---
   useEffect(() => {
-    // Carica versione
-    if (window.api?.getAppVersion) {
-      window.api.getAppVersion().then(v => setVersion(v || '')).catch(() => {});
-    }
+    if (!window.api) return;
+
+    // Carica Versione App
+    window.api.getAppVersion?.().then(v => setVersion(v || '')).catch(() => {});
     
-    // Carica impostazioni (gestisce il caso in cui l'API non sia esposta)
-    if (window.api?.getSettings) {
-      window.api.getSettings().then(s => {
-        if (s && typeof s.privacyBlurEnabled === 'boolean') {
-            setPrivacyEnabled(s.privacyBlurEnabled);
-        }
-      }).catch(err => console.warn("Errore caricamento settings:", err));
-    }
+    // Carica Impostazioni Privacy
+    window.api.getSettings?.().then(s => {
+      if (s && typeof s.privacyBlurEnabled === 'boolean') {
+        setPrivacyEnabled(s.privacyBlurEnabled);
+      }
+    }).catch(() => {});
   }, []);
 
-  // --- 2. Gestione Sicurezza (Blur & Lock) ---
+  // --- 2. GESTIONE SICUREZZA (BLUR & LOCK) ---
   const handleLockLocal = useCallback(() => {
     setBlurred(false);
-    setPractices([]); // Pulisce la memoria visuale per sicurezza
+    setPractices([]);      // Svuota la RAM per sicurezza
     setAgendaEvents([]);
     setSelectedId(null);
     setIsLocked(true);
@@ -59,59 +62,45 @@ export default function App() {
   useEffect(() => {
     if (!window.api) return;
 
-    // Listener Privacy Blur
-    // Nota: Aggiungiamo controlli di esistenza per ogni funzione API
-    const removeBlur = window.api.onBlur ? window.api.onBlur((val) => {
+    // Sottoscrizione ai listener IPC (restituiscono funzioni di cleanup)
+    const removeBlurListener = window.api.onBlur?.((val) => {
       if (privacyEnabled) setBlurred(val);
-    }) : () => {};
+    });
 
-    // Listener Lock (Automatico o da Tray)
-    const handleRemoteLock = () => handleLockLocal();
+    const removeLockListener = window.api.onLock?.(() => handleLockLocal());
     
-    const removeLock = window.api.onLock ? window.api.onLock(handleRemoteLock) : () => {};
-    const removeVaultLocked = window.api.onVaultLocked ? window.api.onVaultLocked(handleRemoteLock) : () => {};
+    const removeVaultLockedListener = window.api.onVaultLocked?.(() => handleLockLocal());
 
+    // CLEANUP: Qui risolviamo l'errore "e is not a function"
     return () => {
-      if (removeBlur) removeBlur();
-      if (removeLock) removeLock();
-      if (removeVaultLocked) removeVaultLocked();
+      if (typeof removeBlurListener === 'function') removeBlurListener();
+      if (typeof removeLockListener === 'function') removeLockListener();
+      if (typeof removeVaultLockedListener === 'function') removeVaultLockedListener();
     };
   }, [privacyEnabled, handleLockLocal]);
 
   const handleManualLock = async () => {
-    if (window.api?.lockVault) {
-        try {
-            await window.api.lockVault();
-        } catch (e) {
-            console.error("Errore durante il blocco manuale:", e);
-        }
-    }
+    if (window.api?.lockVault) await window.api.lockVault();
     handleLockLocal();
   };
 
-  // --- 3. Logica Dati & Sync ---
-  
-  // Sincronizza scadenze delle pratiche nell'agenda globale
+  // --- 3. LOGICA DATI & SINCRONIZZAZIONE ---
   const syncDeadlinesToAgenda = useCallback((newPractices, currentAgenda) => {
-    // Mantieni eventi manuali (non 'scadenza' generata automaticamente)
     const manualEvents = currentAgenda.filter(e => !e.autoSync);
     const syncedEvents = [];
     
     newPractices.filter(p => p.status === 'active').forEach(p => {
       (p.deadlines || []).forEach(d => {
-        // ID univoco basato su pratica e data per evitare duplicati
-        const uniqueId = `deadline_${p.id}_${d.date}_${d.label.replace(/\s+/g, '_')}`;
-        
         syncedEvents.push({
-          id: uniqueId,
+          id: `deadline_${p.id}_${d.date}_${d.label.replace(/\s/g, '_')}`,
           title: `📋 ${d.label}`,
           date: d.date,
-          timeStart: '09:00', // Orario default
+          timeStart: '09:00',
           timeEnd: '10:00',
           category: 'scadenza',
           notes: `Fascicolo: ${p.client} — ${p.object}`,
           completed: false,
-          autoSync: true, // Flag per identificare eventi generati
+          autoSync: true,
           practiceId: p.id,
         });
       });
@@ -129,8 +118,8 @@ export default function App() {
       const synced = syncDeadlinesToAgenda(pracs, agenda);
       setAgendaEvents(synced);
       
-      // Salva l'agenda sincronizzata per coerenza immediata
-      await window.api.saveAgenda(synced).catch(e => console.warn("Save sync agenda failed", e));
+      // Salva l'agenda sincronizzata nel vault
+      await window.api.saveAgenda(synced);
     } catch (e) { 
       console.error("Errore caricamento dati:", e); 
     }
@@ -139,19 +128,16 @@ export default function App() {
   const handleUnlock = async () => {
     setBlurred(false);
     setIsLocked(false);
-    await loadAllData(); // Ricarica i dati freschi dopo lo sblocco
+    await loadAllData();
   };
 
-  const savePractices = async (newPractices) => {
-    setPractices(newPractices);
+  const savePractices = async (newList) => {
+    setPractices(newList);
     if (window.api?.savePractices) {
-        await window.api.savePractices(newPractices);
-        
-        // Aggiorna agenda
-        const currentAgenda = agendaEvents;
-        const synced = syncDeadlinesToAgenda(newPractices, currentAgenda);
-        setAgendaEvents(synced);
-        if (window.api?.saveAgenda) await window.api.saveAgenda(synced);
+      await window.api.savePractices(newList);
+      const synced = syncDeadlinesToAgenda(newList, agendaEvents);
+      setAgendaEvents(synced);
+      await window.api.saveAgenda(synced);
     }
   };
 
@@ -165,114 +151,109 @@ export default function App() {
     navigate('/pratiche');
   };
 
-  // --- 4. Render ---
-  
-  // Vista Bloccata (Login)
+  // --- 4. RENDER ---
   if (isLocked) {
     return (
-      <>
+      <div className="h-screen w-screen overflow-hidden bg-background">
         <WindowControls />
-        {/* Passiamo handleUnlock che caricherà i dati al successo */}
         <LoginScreen onUnlock={handleUnlock} />
-      </>
+      </div>
     );
   }
 
   const selectedPractice = practices.find(p => p.id === selectedId);
 
   return (
-    <div className="flex h-screen bg-background text-text-primary overflow-hidden border border-white/5 rounded-lg shadow-2xl relative">
-      
-      {/* Privacy Shield (Overlay Sfocato) */}
-      {privacyEnabled && blurred && (
-        <div 
-          className="fixed inset-0 z-[9999] bg-[#0c0d14]/80 backdrop-blur-3xl flex items-center justify-center transition-opacity duration-300 cursor-pointer animate-fade-in"
-          onClick={handleManualLock}
-          title="Clicca per bloccare il Vault"
-        >
-          <div className="text-center">
-            <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse border border-primary/20">
-              <Lock size={40} className="text-primary" />
+    <ErrorBoundary>
+      <div className="flex h-screen bg-background text-text-primary overflow-hidden border border-white/5 rounded-lg shadow-2xl relative">
+        
+        {/* Privacy Shield (Overlay Sfocato) */}
+        {privacyEnabled && blurred && (
+          <div 
+            className="fixed inset-0 z-[9999] bg-[#0c0d14]/80 backdrop-blur-3xl flex items-center justify-center transition-opacity duration-300 cursor-pointer animate-fade-in"
+            onClick={handleManualLock}
+          >
+            <div className="text-center">
+              <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse border border-primary/20">
+                <Lock size={40} className="text-primary" />
+              </div>
+              <h2 className="text-2xl font-bold text-white tracking-tight">LexFlow Protetto</h2>
+              <p className="text-text-muted text-sm mt-2">Contenuto nascosto per privacy.<br/>Clicca per bloccare il Vault.</p>
             </div>
-            <h2 className="text-2xl font-bold text-white tracking-tight">LexFlow Protetto</h2>
-            <p className="text-text-muted text-sm mt-2">Contenuto nascosto per privacy.<br/>Clicca per bloccare il Vault.</p>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Sidebar & Navigazione */}
-      <Sidebar 
-        version={version} 
-        onLock={handleManualLock} 
-        activePage={location.pathname} // Passa la rotta attiva per l'evidenziazione
-      />
-
-      {/* Main Content Area */}
-      <main className="flex-1 h-screen overflow-hidden relative flex flex-col bg-gradient-to-br from-background to-[#13141f]">
-        <WindowControls />
-        <Toaster
-          position="bottom-right"
-          toastOptions={{
-            style: { background: '#13141e', color: '#e2e4ef', border: '1px solid #22263a', fontSize: '13px' }
-          }}
+        <Sidebar 
+          version={version} 
+          onLock={handleManualLock} 
+          activePage={location.pathname}
         />
 
-        <div className="flex-1 overflow-auto p-8 pt-4">
-          <Routes>
-            <Route path="/" element={
-              <Dashboard
-                practices={practices}
-                onNavigate={navigate}
-                onSelectPractice={handleSelectPractice}
-                onNewPractice={() => setShowCreate(true)}
-              />
-            } />
-            
-            <Route path="/pratiche" element={
-              selectedId && selectedPractice ? (
-                <PracticeDetail
-                  practice={selectedPractice}
-                  onBack={() => setSelectedId(null)}
-                  onUpdate={(up) => {
-                    const newList = practices.map(p => p.id === up.id ? up : p);
-                    savePractices(newList);
-                  }}
-                />
-              ) : (
-                <PracticesList
+        <main className="flex-1 h-screen overflow-hidden relative flex flex-col bg-gradient-to-br from-background to-[#13141f]">
+          <WindowControls />
+          <Toaster
+            position="bottom-right"
+            toastOptions={{
+              style: { background: '#13141e', color: '#e2e4ef', border: '1px solid #22263a', fontSize: '13px' }
+            }}
+          />
+
+          <div className="flex-1 overflow-auto p-8 pt-4">
+            <Routes>
+              <Route path="/" element={
+                <Dashboard
                   practices={practices}
-                  onSelect={handleSelectPractice}
+                  onNavigate={navigate}
+                  onSelectPractice={handleSelectPractice}
                   onNewPractice={() => setShowCreate(true)}
                 />
-              )
-            } />
-            
-            <Route path="/scadenze" element={
-              <DeadlinesPage practices={practices} onSelectPractice={handleSelectPractice} />
-            } />
-            
-            <Route path="/agenda" element={
-              <AgendaPage
-                agendaEvents={agendaEvents}
-                onSaveAgenda={saveAgenda}
-                practices={practices}
-                onSelectPractice={handleSelectPractice}
-              />
-            } />
-            
-            <Route path="/settings" element={<SettingsPage onLock={handleManualLock} />} />
-            <Route path="/sicurezza" element={<SettingsPage onLock={handleManualLock} />} />
-          </Routes>
-        </div>
-      </main>
+              } />
+              
+              <Route path="/pratiche" element={
+                selectedId && selectedPractice ? (
+                  <PracticeDetail
+                    practice={selectedPractice}
+                    onBack={() => setSelectedId(null)}
+                    onUpdate={(up) => {
+                      const newList = practices.map(p => p.id === up.id ? up : p);
+                      savePractices(newList);
+                    }}
+                  />
+                ) : (
+                  <PracticesList
+                    practices={practices}
+                    onSelect={handleSelectPractice}
+                    onNewPractice={() => setShowCreate(true)}
+                  />
+                )
+              } />
+              
+              <Route path="/scadenze" element={
+                <DeadlinesPage practices={practices} onSelectPractice={handleSelectPractice} />
+              } />
+              
+              <Route path="/agenda" element={
+                <AgendaPage
+                  agendaEvents={agendaEvents}
+                  onSaveAgenda={saveAgenda}
+                  practices={practices}
+                  onSelectPractice={handleSelectPractice}
+                />
+              } />
+              
+              <Route path="/settings" element={<SettingsPage onLock={handleManualLock} />} />
+              <Route path="/sicurezza" element={<SettingsPage onLock={handleManualLock} />} />
+            </Routes>
+          </div>
+        </main>
 
-      {/* Modale Creazione */}
-      {showCreate && (
-        <CreatePracticeModal
-          onClose={() => setShowCreate(false)}
-          onSave={(p) => savePractices([p, ...practices])}
-        />
-      )}
-    </div>
+        {showCreate && (
+          <CreatePracticeModal
+            onClose={() => setShowCreate(false)}
+            onSave={(p) => savePractices([p, ...practices])}
+          />
+        )}
+      </div>
+    </ErrorBoundary>
   );
 }

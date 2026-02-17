@@ -14,7 +14,7 @@ import logo from '../assets/logo.png';
 export default function Sidebar({ version, onLock }) {
   const location = useLocation();
 
-  // Elementi della navigazione principale
+  // Elementi della navigazione principale - Dashboard al primo posto
   const navItems = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard },
     { path: '/pratiche', label: 'Fascicoli', icon: Briefcase },
@@ -22,84 +22,112 @@ export default function Sidebar({ version, onLock }) {
     { path: '/agenda', label: 'Agenda', icon: CalendarDays },
   ];
 
-  // Elementi della navigazione secondaria (Sistema)
-  const bottomItems = [
+  const systemItems = [
     { path: '/settings', label: 'Impostazioni', icon: Settings },
   ];
 
-  // Sottocomponente per i singoli item della navigazione per mantenere il codice pulito
+  // Sottocomponente per i singoli item della navigazione
   const NavItem = ({ item }) => {
     const isActive = location.pathname === item.path;
+    
     return (
       <NavLink
         to={item.path}
-        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group ${
+        className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 group relative ${
           isActive 
-            ? 'bg-primary/10 text-primary border border-primary/20 shadow-lg shadow-primary/5' 
-            : 'text-text-muted hover:text-white hover:bg-white/5'
+            ? 'bg-primary text-white shadow-lg shadow-primary/20 scale-[1.02]' 
+            : 'text-text-dim hover:text-white hover:bg-white/5'
         }`}
       >
+        {/* Indicatore laterale per l'elemento attivo */}
+        {isActive && (
+          <div className="absolute left-0 top-3 bottom-3 w-1 bg-white rounded-r-full shadow-[0_0_8px_white]" />
+        )}
+        
         <item.icon 
-          size={18} 
-          className={`transition-colors ${isActive ? 'text-primary' : 'text-text-dim group-hover:text-white'}`} 
+          size={20} 
+          className={`transition-all duration-300 ${
+            isActive ? 'text-white' : 'group-hover:text-primary group-hover:scale-110'
+          }`} 
         />
-        <span className="font-medium text-sm">{item.label}</span>
+        <span className={`text-sm tracking-wide ${isActive ? 'font-bold' : 'font-medium'}`}>
+          {item.label}
+        </span>
       </NavLink>
     );
   };
 
   return (
-    <aside className="w-64 h-screen bg-[#0c0d14] border-r border-[#22263a] flex flex-col flex-shrink-0 z-20 pt-14">
-      {/* pt-14 sopra è FONDAMENTALE per macOS: 
-          sposta il contenuto sotto i tasti a semaforo (chiudi, minimizza, ingrandisci) 
-      */}
+    <aside className="w-68 h-screen bg-[#08090f] border-r border-white/5 flex flex-col flex-shrink-0 z-20 pt-14 relative">
+      
+      {/* Glow effect di sfondo (opzionale, molto sottile) */}
+      <div className="absolute top-0 left-0 w-full h-32 bg-primary/5 blur-[80px] -z-10 pointer-events-none" />
 
-      {/* Area Logo con stile Premium */}
-      <div className="h-16 flex items-center px-6 mb-4">
-        <div className="flex items-center gap-3">
-          {/* Verifica che logo.png esista in client/src/assets/ */}
-          <img src={logo} alt="LexFlow" className="w-8 h-8 object-contain" />
-          <span className="text-xl font-bold tracking-tight text-white">LexFlow</span>
+      {/* Area Logo Premium */}
+      <div className="h-20 flex items-center px-8 mb-6">
+        <div className="flex items-center gap-4">
+          <div className="relative">
+            <div className="absolute inset-0 bg-primary/20 blur-lg rounded-full" />
+            <img src={logo} alt="LexFlow" className="w-10 h-10 object-contain relative z-10" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-2xl font-black tracking-tighter text-white leading-none">LexFlow</span>
+            <span className="text-[9px] font-bold text-primary uppercase tracking-[3px] mt-1">Law Suite</span>
+          </div>
         </div>
       </div>
 
-      {/* Navigazione Principale */}
-      <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto custom-scrollbar">
-        <div className="mb-2 px-3 text-[10px] font-bold text-text-dim uppercase tracking-wider">
-          Menu Principale
+      {/* Navigazione */}
+      <nav className="flex-1 px-4 py-2 space-y-8 overflow-y-auto custom-scrollbar">
+        
+        {/* Gruppo Principale */}
+        <div className="space-y-1.5">
+          <div className="px-4 mb-3 text-[10px] font-black text-text-dim/40 uppercase tracking-[3px]">
+            Menu Principale
+          </div>
+          {navItems.map((item) => (
+            <NavItem key={item.path} item={item} />
+          ))}
         </div>
-        {navItems.map((item) => (
-          <NavItem key={item.path} item={item} />
-        ))}
 
-        <div className="mt-8 mb-2 px-3 text-[10px] font-bold text-text-dim uppercase tracking-wider">
-          Sistema
+        {/* Gruppo Sistema */}
+        <div className="space-y-1.5">
+          <div className="px-4 mb-3 text-[10px] font-black text-text-dim/40 uppercase tracking-[3px]">
+            Configurazione
+          </div>
+          {systemItems.map((item) => (
+            <NavItem key={item.path} item={item} />
+          ))}
         </div>
-        {bottomItems.map((item) => (
-          <NavItem key={item.path} item={item} />
-        ))}
       </nav>
 
       {/* Footer con Azioni di Sicurezza */}
-      <div className="p-4 border-t border-[#22263a]/50 bg-[#0c0d14]">
-        {/* Tasto Blocca Vault con feedback visivo rosso al passaggio del mouse */}
+      <div className="p-6 border-t border-white/5 bg-[#0a0b12]">
+        
+        {/* Tasto Blocca Vault con stile Alert */}
         <button
           onClick={onLock}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-text-muted hover:text-white hover:bg-red-500/10 hover:border-red-500/20 border border-transparent transition-all duration-200 group mb-4"
+          className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-2xl text-text-dim hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all duration-300 group mb-6"
         >
-          <Lock size={18} className="text-text-dim group-hover:text-red-400 transition-colors" />
-          <span className="font-medium text-sm group-hover:text-red-100">Blocca Vault</span>
+          <Lock size={18} className="transition-transform group-hover:-rotate-12" />
+          <span className="font-black text-[11px] uppercase tracking-widest">Blocca Vault</span>
         </button>
 
-        {/* Info Versione e Stato Sicurezza */}
-        <div className="flex items-center justify-between px-2">
-          <div className="flex items-center gap-1.5 text-[10px] text-text-dim">
-            <ShieldCheck size={10} className="text-green-500" />
-            <span>v{version}</span>
+        {/* Badge Versione e Crittografia */}
+        <div className="flex flex-col gap-3 px-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[10px] font-bold text-text-dim/60 uppercase tracking-tighter">Versione {version}</span>
+            </div>
           </div>
-          <span className="text-[10px] text-text-dim opacity-50 font-mono">
-            SQLite Secure
-          </span>
+          
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-lg border border-white/5">
+            <ShieldCheck size={12} className="text-primary" />
+            <span className="text-[9px] font-black text-text-dim uppercase tracking-widest">
+              AES-256 GCM Secure
+            </span>
+          </div>
         </div>
       </div>
     </aside>

@@ -1,18 +1,39 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
-  // --- Sicurezza ed Eventi ---
-  onBlur: (cb) => ipcRenderer.on('app-blur', (_, val) => cb(val)),
-  onVaultLocked: (cb) => ipcRenderer.on('vault-locked', () => cb()),
-  onLock: (cb) => ipcRenderer.on('app-lock', () => cb()),
-  onUpdateMsg: (cb) => ipcRenderer.on('update-msg', (_, msg) => cb(msg)),
+  // --- Sicurezza ed Eventi (CORRETTI CON CLEANUP) ---
+  
+  onBlur: (cb) => {
+    const subscription = (_, val) => cb(val);
+    ipcRenderer.on('app-blur', subscription);
+    // Restituiamo una funzione che rimuove correttamente l'ascoltatore
+    return () => ipcRenderer.removeListener('app-blur', subscription);
+  },
+
+  onVaultLocked: (cb) => {
+    const subscription = () => cb();
+    ipcRenderer.on('vault-locked', subscription);
+    return () => ipcRenderer.removeListener('vault-locked', subscription);
+  },
+
+  onLock: (cb) => {
+    const subscription = () => cb();
+    ipcRenderer.on('app-lock', subscription);
+    return () => ipcRenderer.removeListener('app-lock', subscription);
+  },
+
+  onUpdateMsg: (cb) => {
+    const subscription = (_, msg) => cb(msg);
+    ipcRenderer.on('update-msg', subscription);
+    return () => ipcRenderer.removeListener('update-msg', subscription);
+  },
 
   // --- Vault Core ---
   vaultExists: () => ipcRenderer.invoke('vault-exists'),
   unlockVault: (pwd) => ipcRenderer.invoke('vault-unlock', pwd),
   lockVault: () => ipcRenderer.invoke('vault-lock'),
   resetVault: () => ipcRenderer.invoke('vault-reset'),
-  exportVault: (pwd) => ipcRenderer.invoke('vault-export', pwd), // Backup completo
+  exportVault: (pwd) => ipcRenderer.invoke('vault-export', pwd),
 
   // --- Dati (Pratiche) ---
   loadPractices: () => ipcRenderer.invoke('vault-load'),
@@ -32,7 +53,6 @@ contextBridge.exposeInMainWorld('api', {
   // --- File System & Export Sicuro ---
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   openPath: (path) => ipcRenderer.invoke('open-path', path),
-  // Passa buffer e nome, il main gestisce il dialogo di salvataggio
   exportPDF: (buffer, defaultName) => ipcRenderer.invoke('export-pdf', { buffer, defaultName }),
 
   // --- Info Piattaforma & Impostazioni ---
