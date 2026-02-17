@@ -20,8 +20,15 @@ contextBridge.exposeInMainWorld('api', {
   loadAgenda: () => ipcRenderer.invoke('vault-load-agenda'),
   saveAgenda: (data) => ipcRenderer.invoke('vault-save-agenda', data),
 
+  // --- Biometria ---
+  checkBio: () => ipcRenderer.invoke('bio-check'),
+  hasBioSaved: () => ipcRenderer.invoke('bio-has-saved'),
+  saveBio: (pwd) => ipcRenderer.invoke('bio-save', pwd),
+  loginBio: () => ipcRenderer.invoke('bio-login'),
+  clearBio: () => ipcRenderer.invoke('bio-clear'),
+
   // --- Info Piattaforma ---
-  isMac: () => ipcRenderer.invoke('get-is-mac'), // Questa è la riga che causava l'errore
+  isMac: () => ipcRenderer.invoke('get-is-mac'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
   // --- Controlli Finestra ---

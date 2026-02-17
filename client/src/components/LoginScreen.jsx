@@ -20,6 +20,8 @@ export default function LoginScreen({ onUnlock }) {
   const [loadingText, setLoadingText] = useState('Sblocco...');
   const [isNew, setIsNew] = useState(null);
   const [showPwd, setShowPwd] = useState(false);
+  
+  // Stati per la Biometria
   const [bioAvailable, setBioAvailable] = useState(false);
   const [bioSaved, setBioSaved] = useState(false);
   const [bioFailed, setBioFailed] = useState(0);
@@ -30,32 +32,55 @@ export default function LoginScreen({ onUnlock }) {
   const MAX_BIO_ATTEMPTS = 3;
 
   useEffect(() => {
-    window.api.vaultExists().then(exists => {
-      const newVault = !exists;
-      setIsNew(newVault);
-      if (newVault) setShowPasswordField(true);
-    });
-    window.api.checkBio().then(available => {
-      setBioAvailable(available);
-      if (available) {
-        window.api.hasBioSaved().then(saved => {
-          setBioSaved(saved);
-          if (saved && !bioTriggered.current) {
-            bioTriggered.current = true;
-            setTimeout(() => {
-              window.api.vaultExists().then(exists => {
-                if (exists) handleBioLogin(true);
-                else setShowPasswordField(true);
-              });
-            }, 400);
-          } else if (!saved) {
+    // Controllo sicurezza: se l'API non è esposta, mostra errore o fallback
+    if (!window.api) {
+      console.error("API Electron non trovata");
+      setIsNew(false);
+      setShowPasswordField(true);
+      return;
+    }
+
+    const init = async () => {
+      try {
+        // 1. Controlla esistenza Vault
+        const exists = await window.api.vaultExists();
+        setIsNew(!exists);
+
+        if (!exists) {
+          setShowPasswordField(true);
+          return;
+        }
+
+        // 2. Controlla disponibilità Biometria
+        try {
+          const available = await window.api.checkBio();
+          setBioAvailable(available);
+
+          if (available) {
+            const saved = await window.api.hasBioSaved();
+            setBioSaved(saved);
+
+            // Auto-trigger biometria se c'è una password salvata e non abbiamo già provato
+            if (saved && !bioTriggered.current) {
+              bioTriggered.current = true;
+              setTimeout(() => handleBioLogin(true), 500);
+            } else if (!saved) {
+              setShowPasswordField(true);
+            }
+          } else {
             setShowPasswordField(true);
           }
-        });
-      } else {
-        setShowPasswordField(true);
+        } catch (err) {
+          console.warn("Errore inizializzazione bio:", err);
+          setShowPasswordField(true);
+        }
+      } catch (err) {
+        console.error("Errore inizializzazione vault:", err);
+        setError("Errore critico di sistema");
       }
-    });
+    };
+
+    init();
   }, []);
 
   const getStrength = (pwd) => {
@@ -67,11 +92,11 @@ export default function LoginScreen({ onUnlock }) {
     if (/[0-9]/.test(pwd)) score++;
     if (/[^A-Za-z0-9]/.test(pwd)) score++;
     
-    if (score <= 1) return { label: 'Debole', color: 'bg-danger', pct: 20, segments: 1 };
-    if (score <= 2) return { label: 'Sufficiente', color: 'bg-warning', pct: 40, segments: 2 };
-    if (score <= 3) return { label: 'Buona', color: 'bg-info', pct: 60, segments: 3 };
-    if (score <= 4) return { label: 'Forte', color: 'bg-primary', pct: 80, segments: 4 };
-    return { label: 'Eccellente', color: 'bg-success', pct: 100, segments: 5 };
+    if (score <= 1) return { label: 'Debole', color: 'bg-red-500', pct: 20, segments: 1 };
+    if (score <= 2) return { label: 'Sufficiente', color: 'bg-yellow-500', pct: 40, segments: 2 };
+    if (score <= 3) return { label: 'Buona', color: 'bg-blue-400', pct: 60, segments: 3 };
+    if (score <= 4) return { label: 'Forte', color: 'bg-indigo-500', pct: 80, segments: 4 };
+    return { label: 'Eccellente', color: 'bg-emerald-500', pct: 100, segments: 5 };
   };
 
   const isPasswordStrong = (pwd) => {
@@ -95,8 +120,13 @@ export default function LoginScreen({ onUnlock }) {
 
     try {
       const result = await window.api.unlockVault(password);
+      
       if (result.success) {
-        if (bioAvailable) { try { await window.api.saveBio(password); } catch {} }
+        // Se la biometria è disponibile ma non salvata, chiedi di salvarla ora (silenziosamente)
+        if (bioAvailable) { 
+          try { await window.api.saveBio(password); } catch (e) { console.error(e); } 
+        }
+
         if (result.isNew && result.recoveryCode) {
           setRecoveryCode(result.recoveryCode);
         } else {
@@ -106,8 +136,9 @@ export default function LoginScreen({ onUnlock }) {
         setError(result.error || 'Password errata');
         setLoading(false);
       }
-    } catch {
-      setError('Errore di sistema');
+    } catch (err) {
+      console.error(err);
+      setError('Errore di sistema durante lo sblocco');
       setLoading(false);
     }
   };
@@ -115,8 +146,11 @@ export default function LoginScreen({ onUnlock }) {
   const handleBioLogin = async (isAutomatic = false) => {
     setLoading(true);
     setLoadingText('Autenticazione...');
+    
     try {
+      // Chiama la funzione esposta nel preload
       const savedPassword = await window.api.loginBio();
+      
       if (savedPassword) {
         const result = await window.api.unlockVault(savedPassword);
         if (result.success) {
@@ -124,17 +158,27 @@ export default function LoginScreen({ onUnlock }) {
           return;
         }
       }
+      throw new Error("Password non valida");
+    } catch (err) {
+      console.warn("Login bio fallito:", err);
       setBioFailed(prev => prev + 1);
-      if (bioFailed + 1 >= MAX_BIO_ATTEMPTS) setShowPasswordField(true);
-      if (!isAutomatic) setError('Accesso biometrico fallito.');
-    } catch {
-      setBioFailed(prev => prev + 1);
-      if (!isAutomatic) setError('Riconoscimento annullato.');
+      
+      // Se fallisce troppe volte, forza l'uso della password
+      if (bioFailed + 1 >= MAX_BIO_ATTEMPTS) {
+        setShowPasswordField(true);
+        if (!isAutomatic) setError('Troppi tentativi falliti. Usa la password.');
+      } else if (!isAutomatic) {
+        setError('Riconoscimento fallito o annullato.');
+      } else {
+        // Se era automatico e fallisce, mostra il campo password senza errori aggressivi
+        setShowPasswordField(true);
+      }
     } finally {
-      if (!isAutomatic) setLoading(false);
+      setLoading(false);
     }
   };
 
+  // Loading Iniziale
   if (isNew === null) return (
     <div className="flex items-center justify-center min-h-screen bg-background">
       <div className="animate-pulse flex flex-col items-center gap-4">
@@ -208,6 +252,7 @@ export default function LoginScreen({ onUnlock }) {
           )}
         </div>
 
+        {/* Pulsante Biometria (Visibile solo se configurata e non in modalità password forzata) */}
         {!isNew && bioAvailable && bioSaved && bioFailed < MAX_BIO_ATTEMPTS && !showPasswordField && (
           <div className="space-y-4">
             <button 
@@ -228,6 +273,7 @@ export default function LoginScreen({ onUnlock }) {
           </div>
         )}
 
+        {/* Form Password (Setup o Fallback) */}
         {(isNew || showPasswordField) && (
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-4">
@@ -237,8 +283,8 @@ export default function LoginScreen({ onUnlock }) {
                 <KeyRound size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-dim group-focus-within:text-primary transition-colors" />
                 <input 
                   type={showPwd ? 'text' : 'password'} 
-                  className="input-field pl-12 pr-12 py-4 rounded-2xl bg-white/5 border-white/10 hover:border-white/20 transition-all" 
-                  placeholder="Minimo 12 caratteri..." 
+                  className="input-field pl-12 pr-12 py-4 rounded-2xl bg-white/5 border-white/10 hover:border-white/20 transition-all text-white placeholder:text-white/20" 
+                  placeholder="Inserisci la password..." 
                   value={password} 
                   onChange={e => setPassword(e.target.value)} 
                   autoFocus 
@@ -253,7 +299,7 @@ export default function LoginScreen({ onUnlock }) {
               <div className="space-y-2 px-1">
                 <div className="flex justify-between items-end">
                   <span className="text-[10px] font-bold uppercase tracking-widest opacity-50">Sicurezza</span>
-                  <span className="text-xs font-bold" style={{ color: `var(--color-${strength.label === 'Eccellente' || strength.label === 'Forte' ? 'success' : 'warning'})` }}>
+                  <span className={`text-xs font-bold ${strength.color.replace('bg-', 'text-')}`}>
                     {strength.label}
                   </span>
                 </div>
@@ -275,7 +321,7 @@ export default function LoginScreen({ onUnlock }) {
                   <ShieldCheck size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-dim" />
                   <input 
                     type={showPwd ? 'text' : 'password'} 
-                    className="input-field pl-12 py-4 rounded-2xl bg-white/5 border-white/10" 
+                    className="input-field pl-12 py-4 rounded-2xl bg-white/5 border-white/10 text-white placeholder:text-white/20" 
                     placeholder="Ripeti la password..." 
                     value={confirm} 
                     onChange={e => setConfirm(e.target.value)} 
@@ -286,9 +332,9 @@ export default function LoginScreen({ onUnlock }) {
           </div>
 
           {error && (
-            <div className="bg-danger/10 border border-danger/20 p-3 rounded-xl flex items-center gap-2 animate-shake">
-              <ShieldAlert size={16} className="text-danger flex-shrink-0" />
-              <p className="text-danger text-[11px] font-semibold leading-tight">{error}</p>
+            <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl flex items-center gap-2 animate-shake">
+              <ShieldAlert size={16} className="text-red-500 flex-shrink-0" />
+              <p className="text-red-500 text-[11px] font-semibold leading-tight">{error}</p>
             </div>
           )}
 
@@ -314,10 +360,12 @@ export default function LoginScreen({ onUnlock }) {
             <button 
               type="button" 
               onClick={async () => {
-                const result = await window.api.resetVault();
-                if (result?.success) { setIsNew(true); setPassword(''); setConfirm(''); setError(''); }
+                if (window.confirm("Sei sicuro? Perderai tutti i dati.")) {
+                  const result = await window.api.resetVault();
+                  if (result?.success) { setIsNew(true); setPassword(''); setConfirm(''); setError(''); setBioSaved(false); }
+                }
               }} 
-              className="text-text-dim hover:text-danger text-[10px] font-bold uppercase tracking-widest transition-colors"
+              className="text-text-dim hover:text-red-500 text-[10px] font-bold uppercase tracking-widest transition-colors"
             >
               Password dimenticata? Reset Vault
             </button>
@@ -325,12 +373,12 @@ export default function LoginScreen({ onUnlock }) {
 
           <div className="flex items-center gap-4 opacity-40">
             <div className="flex items-center gap-1.5 text-[9px] font-bold text-text-dim uppercase tracking-widest">
-              <CheckCircle2 size={12} className="text-success" />
+              <CheckCircle2 size={12} className="text-emerald-500" />
               AES-256 GCM
             </div>
             <div className="w-1 h-1 bg-text-dim rounded-full" />
             <div className="flex items-center gap-1.5 text-[9px] font-bold text-text-dim uppercase tracking-widest">
-              <CheckCircle2 size={12} className="text-success" />
+              <CheckCircle2 size={12} className="text-emerald-500" />
               Zero-Knowledge
             </div>
           </div>
