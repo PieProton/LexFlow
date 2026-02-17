@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Toaster } from 'react-hot-toast';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { Lock } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 // Componenti
 import LoginScreen from './components/LoginScreen';
@@ -28,32 +29,93 @@ export default function App() {
   const [privacyEnabled, setPrivacyEnabled] = useState(true);
   const [version, setVersion] = useState('');
   
-  // --- STATI DEI DATI (LIFTED STATE) ---
+  // --- STATI DEI DATI & NOTIFICHE ---
   const [practices, setPractices] = useState([]);
   const [agendaEvents, setAgendaEvents] = useState([]);
+  const [settings, setSettings] = useState({});
   const [selectedId, setSelectedId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [sentNotifications, setSentNotifications] = useState(new Set());
 
   // --- 1. INIZIALIZZAZIONE ---
   useEffect(() => {
     if (!window.api) return;
 
-    // Carica Versione App
     window.api.getAppVersion?.().then(v => setVersion(v || '')).catch(() => {});
     
-    // Carica Impostazioni Privacy
+    // Carichiamo le impostazioni (incluso il tempo di notifica)
     window.api.getSettings?.().then(s => {
-      if (s && typeof s.privacyBlurEnabled === 'boolean') {
-        setPrivacyEnabled(s.privacyBlurEnabled);
+      if (s) {
+        setSettings(s);
+        if (typeof s.privacyBlurEnabled === 'boolean') setPrivacyEnabled(s.privacyBlurEnabled);
       }
     }).catch(() => {});
   }, []);
 
-  // --- 2. GESTIONE SICUREZZA (BLUR & LOCK) ---
+  // --- 2. LOGICA NOTIFICHE DI SISTEMA (Monitoraggio Attivo) ---
+  useEffect(() => {
+    // Non controllare se l'app è bloccata o le notifiche sono disattivate
+    if (isLocked || settings.notifyEnabled === false) return;
+
+    const checkAndNotify = () => {
+      const now = new Date();
+      // Preavviso in millisecondi (default 30 min se non impostato)
+      const leadTimeMs = (settings.notificationTime || 30) * 60 * 1000;
+
+      // A. Controllo Agenda
+      agendaEvents.forEach(event => {
+        if (event.completed || event.category === 'scadenza') return; // Evitiamo doppioni se già sincronizzato
+
+        const eventTime = new Date(`${event.date}T${event.timeStart}`);
+        const diff = eventTime - now;
+
+        // Se l'evento è nel futuro e rientra nella finestra di preavviso
+        if (diff > 0 && diff <= leadTimeMs) {
+          const nId = `agenda-${event.id}`;
+          if (!sentNotifications.has(nId)) {
+            window.api.sendNotification({
+              title: `📅 Impegno tra poco: ${event.title}`,
+              body: `L'evento inizierà alle ore ${event.timeStart}.`
+            });
+            setSentNotifications(prev => new Set(prev).add(nId));
+          }
+        }
+      });
+
+      // B. Controllo Scadenze Fascicoli
+      practices.forEach(p => {
+        if (p.status !== 'active') return;
+        (p.deadlines || []).forEach(d => {
+          const dDate = new Date(d.date);
+          const isToday = dDate.toDateString() === now.toDateString();
+
+          if (isToday) {
+            const nId = `deadline-${p.id}-${d.label}-${d.date}`;
+            if (!sentNotifications.has(nId)) {
+              window.api.sendNotification({
+                title: `📋 Scadenza Oggi: ${d.label}`,
+                body: `Fascicolo: ${p.client} - Rif: ${p.code || 'N/D'}`
+              });
+              setSentNotifications(prev => new Set(prev).add(nId));
+            }
+          }
+        });
+      });
+    };
+
+    // Controllo ogni 60 secondi
+    const interval = setInterval(checkAndNotify, 60000);
+    checkAndNotify(); // Primo controllo immediato allo sblocco
+
+    return () => clearInterval(interval);
+  }, [isLocked, practices, agendaEvents, settings, sentNotifications]);
+
+  // --- 3. GESTIONE SICUREZZA (BLUR & LOCK) ---
   const handleLockLocal = useCallback(() => {
     setBlurred(false);
-    setPractices([]);      // Svuota la RAM per sicurezza
+    setPractices([]); 
     setAgendaEvents([]);
+    setSentNotifications(new Set()); // Resettiamo le notifiche inviate per la prossima sessione
     setSelectedId(null);
     setIsLocked(true);
     navigate('/');
@@ -62,16 +124,13 @@ export default function App() {
   useEffect(() => {
     if (!window.api) return;
 
-    // Sottoscrizione ai listener IPC (restituiscono funzioni di cleanup)
     const removeBlurListener = window.api.onBlur?.((val) => {
       if (privacyEnabled) setBlurred(val);
     });
 
     const removeLockListener = window.api.onLock?.(() => handleLockLocal());
-    
     const removeVaultLockedListener = window.api.onVaultLocked?.(() => handleLockLocal());
 
-    // CLEANUP: Qui risolviamo l'errore "e is not a function"
     return () => {
       if (typeof removeBlurListener === 'function') removeBlurListener();
       if (typeof removeLockListener === 'function') removeLockListener();
@@ -84,7 +143,7 @@ export default function App() {
     handleLockLocal();
   };
 
-  // --- 3. LOGICA DATI & SINCRONIZZAZIONE ---
+  // --- 4. LOGICA DATI & SINCRONIZZAZIONE ---
   const syncDeadlinesToAgenda = useCallback((newPractices, currentAgenda) => {
     const manualEvents = currentAgenda.filter(e => !e.autoSync);
     const syncedEvents = [];
@@ -113,12 +172,13 @@ export default function App() {
     try {
       const pracs = await window.api.loadPractices().catch(() => []) || [];
       const agenda = await window.api.loadAgenda().catch(() => []) || [];
+      const currentSettings = await window.api.getSettings().catch(() => ({}));
       
       setPractices(pracs);
+      setSettings(currentSettings);
       const synced = syncDeadlinesToAgenda(pracs, agenda);
       setAgendaEvents(synced);
       
-      // Salva l'agenda sincronizzata nel vault
       await window.api.saveAgenda(synced);
     } catch (e) { 
       console.error("Errore caricamento dati:", e); 
@@ -151,7 +211,7 @@ export default function App() {
     navigate('/pratiche');
   };
 
-  // --- 4. RENDER ---
+  // --- 5. RENDER ---
   if (isLocked) {
     return (
       <div className="h-screen w-screen overflow-hidden bg-background">
@@ -167,7 +227,7 @@ export default function App() {
     <ErrorBoundary>
       <div className="flex h-screen bg-background text-text-primary overflow-hidden border border-white/5 rounded-lg shadow-2xl relative">
         
-        {/* Privacy Shield (Overlay Sfocato) */}
+        {/* Privacy Shield */}
         {privacyEnabled && blurred && (
           <div 
             className="fixed inset-0 z-[9999] bg-[#0c0d14]/80 backdrop-blur-3xl flex items-center justify-center transition-opacity duration-300 cursor-pointer animate-fade-in"

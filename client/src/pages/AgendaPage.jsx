@@ -1,5 +1,18 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Plus, ChevronLeft, ChevronRight, CalendarDays, Clock, X, Trash2, ExternalLink, Calendar, Filter, AlertCircle, BarChart3 } from 'lucide-react';
+import { 
+  Plus, 
+  ChevronLeft, 
+  ChevronRight, 
+  CalendarDays, 
+  Clock, 
+  X, 
+  Trash2, 
+  ExternalLink, 
+  Calendar, 
+  Filter, 
+  AlertCircle, 
+  BarChart3 
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const DAYS_IT = ['Domenica','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato'];
@@ -31,7 +44,7 @@ function toDateStr(d) { return d.toISOString().split('T')[0]; }
 function parseDate(s) { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); }
 function fmtTime(h, m) { return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0'); }
 
-// ─── 1. Empty State (REINSERITO & STILIZZATO) ───
+// --- Componente Empty State ---
 function EmptyState({ message, sub, onAdd, date }) {
   return (
     <div className="flex flex-col items-center justify-center h-full py-10 opacity-60">
@@ -49,7 +62,7 @@ function EmptyState({ message, sub, onAdd, date }) {
   );
 }
 
-// ─── 2. Modal (Invariato) ───
+// --- Componente Modal ---
 function EventModal({ event, date, onSave, onDelete, onClose }) {
   const isEdit = !!event?.id;
   const [title, setTitle] = useState(event?.title || '');
@@ -142,7 +155,7 @@ function EventModal({ event, date, onSave, onDelete, onClose }) {
   );
 }
 
-// ─── 3. Stats Card (COMPLETA CON LISTA CATEGORIE) ───
+// --- Componente Stats ---
 function StatsCard({ events }) {
   const now = new Date();
   const todayStr = toDateStr(now);
@@ -158,26 +171,23 @@ function StatsCard({ events }) {
   const todayDone = todayEvts.filter(e => e.completed).length;
   const todayPct = todayEvts.length > 0 ? Math.round((todayDone / todayEvts.length) * 100) : 0;
 
-  // Calcolo categorie settimanali
   const catCounts = {};
   weekEvts.forEach(ev => { catCounts[ev.category] = (catCounts[ev.category] || 0) + 1; });
   const sortedCats = Object.entries(catCounts).sort((a,b) => b[1] - a[1]);
 
   return (
     <div className="space-y-4 animate-slide-up">
-      {/* Circle Progress */}
       <div className="glass-card p-5 relative overflow-hidden">
         <div className="absolute top-0 right-0 p-4 opacity-10"><BarChart3 size={60} /></div>
         <div className="flex items-center gap-5 relative z-10">
           <div className="relative flex-shrink-0">
             <svg width={72} height={72} className="transform -rotate-90">
-              <circle cx={36} cy={36} r={28} fill="none" stroke="var(--bg)" strokeWidth={6}/>
-              <circle cx={36} cy={36} r={28} fill="none" stroke="var(--border)" strokeWidth={6} opacity={0.5}/>
+              <circle cx={36} cy={36} r={28} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth={6}/>
               <circle cx={36} cy={36} r={28} fill="none" stroke="var(--primary)" strokeWidth={6}
                 strokeLinecap="round" strokeDasharray={2*Math.PI*28}
                 strokeDashoffset={2*Math.PI*28*(1 - todayPct/100)}
                 className="transition-all duration-1000 ease-out"
-                style={{ filter: todayPct > 0 ? 'drop-shadow(0 0 6px var(--primary-glow))' : 'none' }}/>
+                style={{ filter: todayPct > 0 ? 'drop-shadow(0 0 6px var(--primary))' : 'none' }}/>
             </svg>
             <div className="absolute inset-0 flex items-center justify-center flex-col">
                  <span className="text-sm font-bold text-white">{todayPct}%</span>
@@ -190,7 +200,6 @@ function StatsCard({ events }) {
         </div>
       </div>
 
-      {/* Breakdown per Categoria (REINSERITO) */}
       {sortedCats.length > 0 && (
         <div className="glass-card p-4">
           <p className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-3">Questa Settimana</p>
@@ -219,7 +228,7 @@ function StatsCard({ events }) {
   );
 }
 
-// ─── 4. Upcoming Panel (Invariato) ───
+// --- Componente Upcoming ---
 function UpcomingPanel({ events, onEdit, onToggle }) {
   const now = new Date();
   const todayStr = toDateStr(now);
@@ -284,7 +293,7 @@ function UpcomingPanel({ events, onEdit, onToggle }) {
   );
 }
 
-// ─── 5. Today View (CON EMPTY STATE INTEGRATO) ───
+// --- Vista Oggi ---
 function TodayView({ events, onToggle, onEdit, onAdd, activeFilters }) {
   const now = new Date();
   const todayStr = toDateStr(now);
@@ -302,7 +311,7 @@ function TodayView({ events, onToggle, onEdit, onAdd, activeFilters }) {
 
   return (
     <div className="space-y-5 h-full flex flex-col">
-      <div className="flex items-center justify-between flex-shrink-0">
+      <div className="flex items-center justify-between gap-4 flex-shrink-0">
         <div>
           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
              {DAYS_IT[now.getDay()]} <span className="text-primary">{now.getDate()}</span> {MONTHS_IT[now.getMonth()]}
@@ -315,7 +324,6 @@ function TodayView({ events, onToggle, onEdit, onAdd, activeFilters }) {
       </div>
 
       <div className="glass-card flex-1 overflow-hidden relative border-t border-white/5">
-         {/* Mostra EmptyState se non ci sono eventi FILTRATI */}
          {todayEvts.length === 0 ? (
             <EmptyState 
               message={allToday.length === 0 ? "Giornata Libera" : "Nessun impegno trovato"}
@@ -336,7 +344,6 @@ function TodayView({ events, onToggle, onEdit, onAdd, activeFilters }) {
                       {String(h).padStart(2,'0')}:00
                     </div>
                   ))}
-                  {/* Laser Current Time Line */}
                   {(() => {
                     const nowMin = now.getHours() * 60 + now.getMinutes();
                     if (nowMin >= 7*60 && nowMin <= 23*60) {
@@ -344,13 +351,14 @@ function TodayView({ events, onToggle, onEdit, onAdd, activeFilters }) {
                       return (
                           <div className="absolute left-14 right-0 z-30 flex items-center" style={{top}}>
                              <div className="text-[9px] font-bold text-primary w-10 text-right pr-2 -ml-12">{fmtTime(now.getHours(), now.getMinutes())}</div>
-                             <div className="flex-1 time-indicator-line"><div className="time-indicator-dot"></div></div>
+                             <div className="flex-1 border-t border-primary relative">
+                               <div className="absolute -left-1 -top-1 w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_var(--primary)]" />
+                             </div>
                           </div>
                       );
                     }
                     return null;
                   })()}
-                  {/* Eventi */}
                   {todayEvts.map(ev => {
                     const [sh,sm] = ev.timeStart.split(':').map(Number);
                     const [eh,em] = ev.timeEnd.split(':').map(Number);
@@ -360,28 +368,27 @@ function TodayView({ events, onToggle, onEdit, onAdd, activeFilters }) {
                     const isSpecial = ev.category === 'udienza' || ev.category === 'scadenza';
                     return (
                       <div key={ev.id} onClick={() => onEdit(ev)}
-                        className={`agenda-event absolute left-14 right-2 rounded-lg px-3 py-1.5 cursor-pointer 
-                            ${ev.category === 'udienza' ? 'event-udienza' : ''}
-                            ${ev.category === 'scadenza' ? 'event-scadenza' : ''}
-                            ${!isSpecial ? 'bg-white/[0.08] hover:bg-white/[0.12] border-l-2 border-white/20' : ''}
+                        className={`agenda-event absolute left-14 right-2 rounded-lg px-3 py-1.5 cursor-pointer transition-all duration-200 hover:scale-[1.01] hover:z-10
+                            ${ev.category === 'udienza' ? 'bg-[#d4a940]/20 border-l-4 border-[#d4a940]' : ''}
+                            ${ev.category === 'scadenza' ? 'bg-[#EF6B6B]/20 border-l-4 border-[#EF6B6B]' : ''}
+                            ${!isSpecial ? 'bg-white/[0.08] hover:bg-white/[0.12] border-l-4 border-white/20' : ''}
                             ${ev.completed ? 'opacity-50 grayscale' : ''}
                         `}
                         style={{
                             top, height: height, 
-                            background: !isSpecial ? `linear-gradient(90deg, ${CAT_COLORS[ev.category]}20 0%, transparent 100%)` : undefined,
-                            borderLeftColor: !isSpecial ? CAT_COLORS[ev.category] : undefined
+                            borderLeftColor: CAT_COLORS[ev.category]
                         }}>
                         <div className="flex justify-between items-start">
                              <div className="min-w-0">
                                 <div className="flex items-center gap-1.5">
-                                    <span className="text-xs font-bold text-white truncate shadow-black drop-shadow-md">{ev.title}</span>
+                                    <span className="text-xs font-bold text-white truncate">{ev.title}</span>
                                     {ev.autoSync && <ExternalLink size={10} className="text-white/70" />}
                                 </div>
-                                {height >= 40 && (
-                                    <p className="text-[10px] text-white/70 mt-0.5 truncate">{ev.notes || ev.category.toUpperCase()}</p>
+                                {height >= 45 && (
+                                    <p className="text-[10px] text-white/60 mt-0.5 truncate">{ev.notes || ev.category.toUpperCase()}</p>
                                 )}
                              </div>
-                             <span className="text-[10px] font-mono text-white/80 bg-black/20 px-1.5 rounded">{ev.timeStart} - {ev.timeEnd}</span>
+                             <span className="text-[10px] font-mono text-white/80 bg-black/20 px-1.5 py-0.5 rounded flex-shrink-0">{ev.timeStart}</span>
                         </div>
                       </div>
                     );
@@ -394,7 +401,7 @@ function TodayView({ events, onToggle, onEdit, onAdd, activeFilters }) {
   );
 }
 
-// ─── 6. Week View (Invariato) ───
+// --- Vista Settimana ---
 function WeekView({ events, onEdit, onAdd, activeFilters }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const scrollRef = useRef(null);
@@ -420,7 +427,7 @@ function WeekView({ events, onEdit, onAdd, activeFilters }) {
       </div>
 
       <div className="glass-card flex-1 flex flex-col overflow-hidden border border-white/5">
-        <div className="grid grid-cols-[50px_repeat(7,1fr)] border-b border-white/5 calendar-grid-header">
+        <div className="grid grid-cols-[50px_repeat(7,1fr)] border-b border-white/5 bg-black/20">
           <div/>
           {days.map(({date, str}) => {
             const isToday = str === todayStr;
@@ -453,8 +460,8 @@ function WeekView({ events, onEdit, onAdd, activeFilters }) {
                        const rect = e.currentTarget.getBoundingClientRect();
                        const y = e.clientY - rect.top + (scrollRef.current?.scrollTop || 0);
                        const rawMin = Math.round((y / 60) * 60) + 7*60;
-                       const startH = Math.floor(rawMin/60), startM = 0; 
-                       onAdd(str, fmtTime(startH, startM), fmtTime(Math.min(startH+1,23), startM));
+                       const startH = Math.floor(rawMin/60); 
+                       onAdd(str, fmtTime(startH, 0), fmtTime(Math.min(startH+1,23), 0));
                     }}>
                   {HOURS.map(h => (<div key={h} className="absolute w-full border-t border-white/[0.03]" style={{top: (h-7)*60, height: 60}}/>))}
                   {dayEvts.map(ev => {
@@ -487,7 +494,7 @@ function WeekView({ events, onEdit, onAdd, activeFilters }) {
   );
 }
 
-// ─── 7. Month View (Invariato) ───
+// --- Vista Mese ---
 function MonthView({ events, onEdit, onAdd, activeFilters }) {
   const [monthOffset, setMonthOffset] = useState(0);
   const now = new Date();
@@ -527,7 +534,7 @@ function MonthView({ events, onEdit, onAdd, activeFilters }) {
             const dayEvts = filtered.filter(e => e.date === str);
             return (
               <div key={idx} onClick={() => onAdd(str)}
-                className={`border-b border-r border-white/5 p-1 relative cursor-pointer hover:bg-white/[0.03] transition group ${outside ? 'opacity-30 bg-black/20' : ''} ${isToday ? 'bg-primary/[0.05] box-shadow-inner' : ''}`}>
+                className={`border-b border-r border-white/5 p-1 relative cursor-pointer hover:bg-white/[0.03] transition group ${outside ? 'opacity-30 bg-black/20' : ''} ${isToday ? 'bg-primary/[0.05]' : ''}`}>
                 <div className={`text-[10px] font-bold mb-1 ml-1 w-5 h-5 flex items-center justify-center rounded-full ${isToday ? 'bg-primary text-black' : 'text-text-muted'}`}>
                   {date.getDate()}
                 </div>
@@ -550,52 +557,104 @@ function MonthView({ events, onEdit, onAdd, activeFilters }) {
   );
 }
 
-// ─── 8. Main Agenda Page (Invariato) ───
+// --- Componente Principale Agenda ---
 export default function AgendaPage({ agendaEvents, onSaveAgenda, practices, onSelectPractice }) {
   const [view, setView] = useState('today');
   const [modalEvent, setModalEvent] = useState(null);
   const [activeFilters, setActiveFilters] = useState([]);
   const events = agendaEvents || [];
-  const toggleFilter = (cat) => setActiveFilters(prev => prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]);
+
+  const toggleFilter = (cat) => setActiveFilters(prev => 
+    prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
+  );
+
   const handleSave = (ev) => {
     const updated = events.some(e => e.id === ev.id) ? events.map(e => e.id === ev.id ? ev : e) : [...events, ev];
     onSaveAgenda(updated); setModalEvent(null); toast.success('Agenda aggiornata');
   };
+
   const handleDelete = (id) => { onSaveAgenda(events.filter(e => e.id !== id)); setModalEvent(null); toast.success('Eliminato'); };
   const handleToggle = (id) => onSaveAgenda(events.map(e => e.id === id ? {...e, completed: !e.completed} : e));
   const openAdd = (date, tS, tE) => setModalEvent({ event: { date: date || toDateStr(new Date()), timeStart: tS || '09:00', timeEnd: tE || '10:00' }, isNew: true });
   const openEdit = (ev) => ev.autoSync && ev.practiceId && onSelectPractice ? onSelectPractice(ev.practiceId) : setModalEvent({ event: ev, isNew: false });
-  const views = [ { key: 'today', label: 'Oggi', icon: Clock }, { key: 'week', label: 'Settimana', icon: CalendarDays }, { key: 'month', label: 'Mese', icon: Calendar } ];
+  
+  const views = [ 
+    { key: 'today', label: 'Oggi', icon: Clock }, 
+    { key: 'week', label: 'Settimana', icon: CalendarDays }, 
+    { key: 'month', label: 'Mese', icon: Calendar } 
+  ];
 
   return (
     <div className="main-content animate-slide-up h-screen flex flex-col overflow-hidden pb-4">
-      <div className="flex items-center justify-between mb-4 px-1 flex-shrink-0">
-        <div className="glass-card p-1 flex gap-1">
+      {/* BARRA SUPERIORE OTTIMIZZATA */}
+      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 mb-4 px-1 flex-shrink-0">
+        
+        {/* Selettore Vista */}
+        <div className="glass-card p-1 flex gap-1 self-start">
           {views.map(({ key, label, icon: Icon }) => (
             <button key={key} onClick={() => setView(key)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition ${view === key ? 'bg-primary text-black shadow-[0_0_15px_rgba(212,169,64,0.4)]' : 'text-text-muted hover:text-white hover:bg-white/5'}`}>
               <Icon size={14}/> {label}
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2 bg-black/20 p-1.5 rounded-xl border border-white/5">
-          <Filter size={14} className="text-text-dim ml-2" />
-          {Object.entries(CAT_LABELS).map(([key, label]) => (
-             <button key={key} onClick={() => toggleFilter(key)} className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider transition border ${activeFilters.includes(key) ? 'border-transparent text-white shadow-sm' : 'border-transparent text-text-dim hover:bg-white/5'}`} style={activeFilters.includes(key) ? { background: CAT_COLORS[key] } : {}}>{label}</button>
-          ))}
-          {activeFilters.length > 0 && <button onClick={() => setActiveFilters([])} className="ml-2 text-[10px] text-text-dim hover:text-white"><X size={12}/></button>}
+
+        {/* BARRA FILTRI CATEGORIE - NUOVO DESIGN RESPONSIVE CON SCROLL ORIZZONTALE */}
+        <div className="flex items-center bg-black/30 rounded-xl border border-white/5 overflow-hidden max-w-full">
+          {/* Label Fisso */}
+          <div className="flex items-center gap-2 text-text-dim px-3 py-2 border-r border-white/5 flex-shrink-0 bg-white/[0.02]">
+            <Filter size={14} />
+            <span className="text-[9px] font-black uppercase tracking-widest hidden sm:inline">Filtra</span>
+          </div>
+          
+          {/* Contenitore Scrollabile */}
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-2 px-3 flex-1 scroll-smooth">
+            {Object.entries(CAT_LABELS).map(([key, label]) => {
+               const isActive = activeFilters.includes(key);
+               return (
+                  <button 
+                    key={key} 
+                    onClick={() => toggleFilter(key)} 
+                    className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border flex-shrink-0 ${
+                      isActive 
+                        ? 'border-transparent text-white shadow-[0_0_10px_rgba(0,0,0,0.5)] scale-105' 
+                        : 'border-white/5 text-text-dim hover:bg-white/5 hover:text-white'
+                    }`} 
+                    style={isActive ? { background: CAT_COLORS[key] } : {}}
+                  >
+                    {label}
+                  </button>
+               );
+            })}
+          </div>
+
+          {/* Reset button fisso se attivo */}
+          {activeFilters.length > 0 && (
+            <button 
+              onClick={() => setActiveFilters([])} 
+              className="px-3 py-2 text-text-dim hover:text-red-400 transition-colors border-l border-white/5 bg-white/[0.02] flex-shrink-0"
+              title="Pulisci filtri"
+            >
+              <X size={16}/>
+            </button>
+          )}
         </div>
       </div>
-      <div className="grid gap-6 flex-1 overflow-hidden" style={{ gridTemplateColumns: '1fr 280px' }}>
+
+      {/* Grid Contenuto */}
+      <div className="grid gap-6 flex-1 overflow-hidden" style={{ gridTemplateColumns: '1fr minmax(240px, 280px)' }}>
         <div className="overflow-hidden h-full">
           {view === 'today' && <TodayView events={events} onToggle={handleToggle} onEdit={openEdit} onAdd={openAdd} activeFilters={activeFilters} />}
           {view === 'week' && <WeekView events={events} onEdit={openEdit} onAdd={openAdd} activeFilters={activeFilters} />}
           {view === 'month' && <MonthView events={events} onEdit={openEdit} onAdd={openAdd} activeFilters={activeFilters} />}
         </div>
-        <div className="space-y-4 overflow-y-auto no-scrollbar pr-1">
+        
+        {/* Sidebar Destra */}
+        <div className="space-y-4 overflow-y-auto no-scrollbar pr-1 hidden md:block">
           <StatsCard events={events} />
           <UpcomingPanel events={events} onEdit={openEdit} onToggle={handleToggle} />
         </div>
       </div>
+
       {modalEvent && <EventModal event={modalEvent.event} onSave={handleSave} onDelete={handleDelete} onClose={() => setModalEvent(null)} />}
     </div>
   );

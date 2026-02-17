@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld('api', {
   onBlur: (cb) => {
     const subscription = (_, val) => cb(val);
     ipcRenderer.on('app-blur', subscription);
-    // Restituiamo una funzione che rimuove correttamente l'ascoltatore
+    // Restituiamo una funzione che rimuove correttamente l'ascoltatore per evitare memory leak
     return () => ipcRenderer.removeListener('app-blur', subscription);
   },
 
@@ -28,12 +28,14 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('update-msg', subscription);
   },
 
-  // --- Vault Core ---
+  // --- Vault Core & Security ---
+  getSecureKey: () => ipcRenderer.invoke('get-secure-key'),
   vaultExists: () => ipcRenderer.invoke('vault-exists'),
   unlockVault: (pwd) => ipcRenderer.invoke('vault-unlock', pwd),
   lockVault: () => ipcRenderer.invoke('vault-lock'),
   resetVault: () => ipcRenderer.invoke('vault-reset'),
   exportVault: (pwd) => ipcRenderer.invoke('vault-export', pwd),
+  resetWithRecovery: (code) => ipcRenderer.invoke('vault-recovery-reset', code),
 
   // --- Dati (Pratiche) ---
   loadPractices: () => ipcRenderer.invoke('vault-load'),
@@ -60,6 +62,10 @@ contextBridge.exposeInMainWorld('api', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (data) => ipcRenderer.invoke('save-settings', data),
+
+  // --- Notifiche di Sistema (AGGIUNTO) ---
+  // Permette al frontend di inviare notifiche native al sistema operativo
+  sendNotification: (data) => ipcRenderer.invoke('send-notification', data),
 
   // --- Controlli Finestra ---
   windowMinimize: () => ipcRenderer.send('window-minimize'),

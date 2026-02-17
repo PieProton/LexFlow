@@ -6,11 +6,10 @@ import {
   Briefcase, 
   Archive,
   CheckCircle2,
-  Filter,
-  Tag
+  Filter
 } from 'lucide-react';
 
-// Mappa dei colori e stili per ogni materia (Premium Design)
+// Mappa dei colori e stili per ogni materia
 const SUBJECT_STYLES = {
   civile: { color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20', label: 'Civile' },
   penale: { color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/20', label: 'Penale' },
@@ -74,9 +73,17 @@ export default function PracticesList({ practices = [], onSelect, onNewPractice 
         </button>
       </div>
 
-      {/* Stats Bar con indicatori di colore */}
+      {/* Stats Bar - ORA CLICCABILI PER FILTRARE */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="glass-card p-6 flex items-center gap-5 border border-white/5">
+        {/* Totali */}
+        <div 
+          onClick={() => setFilterStatus('all')}
+          className={`glass-card p-6 flex items-center gap-5 border cursor-pointer transition-all duration-300 ${
+            filterStatus === 'all' 
+              ? 'border-primary/50 bg-primary/5 shadow-[0_0_20px_rgba(212,169,64,0.1)] scale-[1.02]' 
+              : 'border-white/5 hover:bg-white/5 opacity-70 hover:opacity-100'
+          }`}
+        >
           <div className="w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center text-text-primary">
             <Briefcase size={24} />
           </div>
@@ -85,16 +92,34 @@ export default function PracticesList({ practices = [], onSelect, onNewPractice 
             <div className="text-[10px] text-text-dim uppercase tracking-[2px] font-bold">Totali</div>
           </div>
         </div>
-        <div className="glass-card p-6 flex items-center gap-5 border-l-4 border-l-primary border-y-white/5 border-r-white/5 shadow-xl shadow-primary/5">
-          <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+
+        {/* Attivi */}
+        <div 
+          onClick={() => setFilterStatus('active')}
+          className={`glass-card p-6 flex items-center gap-5 border cursor-pointer transition-all duration-300 ${
+            filterStatus === 'active' 
+              ? 'border-emerald-500/50 bg-emerald-500/5 shadow-[0_0_20px_rgba(16,185,129,0.1)] scale-[1.02]' 
+              : 'border-white/5 hover:bg-white/5 opacity-70 hover:opacity-100'
+          }`}
+        >
+          <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-500">
             <CheckCircle2 size={24} />
           </div>
           <div>
             <div className="text-3xl font-black text-white leading-none mb-1">{stats.active}</div>
-            <div className="text-[10px] text-primary uppercase tracking-[2px] font-bold">Attivi</div>
+            <div className="text-[10px] text-text-dim uppercase tracking-[2px] font-bold">Attivi</div>
           </div>
         </div>
-        <div className="glass-card p-6 flex items-center gap-5 border-l-4 border-l-white/20 border-y-white/5 border-r-white/5">
+
+        {/* Chiusi */}
+        <div 
+          onClick={() => setFilterStatus('closed')}
+          className={`glass-card p-6 flex items-center gap-5 border cursor-pointer transition-all duration-300 ${
+            filterStatus === 'closed' 
+              ? 'border-white/40 bg-white/10 shadow-[0_0_20px_rgba(255,255,255,0.05)] scale-[1.02]' 
+              : 'border-white/5 hover:bg-white/5 opacity-70 hover:opacity-100'
+          }`}
+        >
           <div className="w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center text-text-dim">
             <Archive size={24} />
           </div>
@@ -105,7 +130,7 @@ export default function PracticesList({ practices = [], onSelect, onNewPractice 
         </div>
       </div>
 
-      {/* Toolbar dei Filtri (Migliorata nello spacing) */}
+      {/* Toolbar dei Filtri */}
       <div className="bg-white/5 p-2 rounded-[24px] border border-white/10 flex flex-col lg:flex-row items-center gap-2">
         <div className="relative flex-1 group w-full">
           <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-text-dim group-focus-within:text-primary transition-colors" size={20} />
@@ -122,7 +147,6 @@ export default function PracticesList({ practices = [], onSelect, onNewPractice 
           <div className="flex items-center gap-4 px-4 h-10">
             <Filter size={14} className="text-text-dim opacity-50" />
             
-            {/* Selettore Stato */}
             <select 
               className="bg-transparent border-none text-[10px] font-black uppercase tracking-[2px] text-text-primary focus:ring-0 cursor-pointer hover:text-primary transition-colors p-0"
               value={filterStatus}
@@ -135,7 +159,6 @@ export default function PracticesList({ practices = [], onSelect, onNewPractice 
 
             <div className="w-[1px] h-4 bg-white/10" />
 
-            {/* Selettore Materia */}
             <select 
               className="bg-transparent border-none text-[10px] font-black uppercase tracking-[2px] text-text-primary focus:ring-0 cursor-pointer hover:text-primary transition-colors p-0"
               value={filterType}
@@ -160,7 +183,6 @@ export default function PracticesList({ practices = [], onSelect, onNewPractice 
                 onClick={() => typeof onSelect === 'function' && onSelect(p.id)}
                 className="glass-card p-6 flex items-center justify-between group hover:bg-white/5 hover:border-white/20 transition-all cursor-pointer border border-white/5 relative overflow-hidden"
               >
-                {/* Indicatore laterale colorato per materia */}
                 <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${style.bg.replace('/10', '')}`} />
 
                 <div className="flex items-center gap-6 flex-1 min-w-0">

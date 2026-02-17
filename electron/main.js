@@ -1,9 +1,21 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, dialog, clipboard, session } = require('electron');
+const { 
+  app, 
+  BrowserWindow, 
+  Menu, 
+  Tray, 
+  nativeImage, 
+  shell, 
+  ipcMain, 
+  dialog, 
+  clipboard, 
+  session, 
+  Notification // AGGIUNTO: Supporto notifiche native
+} = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const keychainService = require('./services/keychain'); // Assicurati che questo file esista
+const keychainService = require('./services/keychain');
 const storage = require('./storage');
 const biometrics = require('./biometrics');
 
@@ -12,7 +24,6 @@ const IS_MAC = process.platform === 'darwin';
 // --- 1. GESTIONE ERRORI GLOBALE ---
 process.on('uncaughtException', (error) => {
   console.error('CRITICAL MAIN ERROR:', error);
-  // Non uscire dall'app, prova a recuperare per evitare crash improvvisi
 });
 
 // Traduzioni Menu
@@ -31,6 +42,28 @@ app.setAppUserModelId('com.technojaw.lexflow');
 let mainWindow = null;
 let tray = null;
 let isQuitting = false;
+
+// ===== FUNZIONE HELPER NOTIFICHE DI SISTEMA =====
+function sendSystemNotification(title, body) {
+  if (!Notification.isSupported()) return;
+  
+  const notification = new Notification({
+    title,
+    body,
+    icon: path.join(__dirname, '..', 'build', IS_MAC ? 'lexflow-icon.icns' : 'lexflow-icon.png'),
+    silent: false,
+  });
+
+  notification.on('click', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
+  notification.show();
+}
 
 // ===== IPC Handlers (Canali di comunicazione) =====
 
@@ -56,11 +89,7 @@ ipcMain.handle('bio-save', async (_, pwd) => {
   try { return await biometrics.savePassword(pwd); } catch (e) { console.error(e); return false; }
 });
 ipcMain.handle('bio-login', async () => {
-  try { 
-    return await biometrics.retrievePassword(); 
-  } catch (e) { 
-    throw new Error('Auth failed'); 
-  }
+  try { return await biometrics.retrievePassword(); } catch (e) { throw new Error('Auth failed'); }
 });
 ipcMain.handle('bio-clear', async () => {
   try { return await biometrics.clear(); } catch {}
@@ -87,16 +116,13 @@ ipcMain.handle('vault-reset', async () => {
   return { success: false };
 });
 
-// 4. File System & Utilities (AGGIUNTE CRITICHE)
-
-// Permette di scegliere una cartella (per futuri backup o salvataggi)
+// 4. File System & Utilities
 ipcMain.handle('select-folder', async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
   return result.canceled ? null : result.filePaths[0];
 });
 
-// Apre un file/cartella in modo sicuro (validando che esista)
 ipcMain.handle('open-path', async (_, p) => { 
   if (!p || typeof p !== 'string') return;
   const normalized = path.normalize(p);
@@ -105,20 +131,15 @@ ipcMain.handle('open-path', async (_, p) => {
   }
 });
 
-// Export PDF Sicuro: Riceve il buffer dal frontend e apre il dialog di salvataggio
 ipcMain.handle('export-pdf', async (_, { buffer, defaultName }) => {
   if (!mainWindow) return { success: false };
-  
   const { filePath } = await dialog.showSaveDialog(mainWindow, {
     title: 'Salva PDF',
     defaultPath: defaultName || 'documento.pdf',
     filters: [{ name: 'PDF Document', extensions: ['pdf'] }]
   });
-
   if (!filePath) return { success: false, cancelled: true };
-
   try {
-    // Scrive il buffer su disco
     await fs.promises.writeFile(filePath, Buffer.from(buffer));
     return { success: true, filePath };
   } catch (e) {
@@ -126,11 +147,16 @@ ipcMain.handle('export-pdf', async (_, { buffer, defaultName }) => {
   }
 });
 
-// 5. App Info & Settings
+// 5. App Info, Settings & Notifiche
 ipcMain.handle('get-is-mac', () => IS_MAC);
 ipcMain.handle('get-app-version', () => app.getVersion());
-ipcMain.handle('get-settings', () => storage.getSettings()); // Necessario per App.jsx
-ipcMain.handle('save-settings', (_, data) => storage.saveSettings(data)); // Necessario per SettingsPage
+ipcMain.handle('get-settings', () => storage.getSettings());
+ipcMain.handle('save-settings', (_, data) => storage.saveSettings(data));
+
+// Handler per inviare notifiche dal frontend (Agenda/Scadenze)
+ipcMain.handle('send-notification', (_, { title, body }) => {
+  sendSystemNotification(title, body);
+});
 
 // Export Backup Completo
 ipcMain.handle('vault-export', async (_, exportPassword) => {
@@ -196,7 +222,6 @@ function createWindow() {
 
   mainWindow.setContentProtection(true); // Anti-Screenshot
 
-  // Caricamento interfaccia
   const startUrl = process.env.ELECTRON_START_URL || `file://${path.join(__dirname, '..', 'client', 'dist', 'index.html')}`;
   mainWindow.loadURL(startUrl);
   
@@ -207,20 +232,17 @@ function createWindow() {
     autoUpdater.checkForUpdatesAndNotify();
   }
 
-  // Navigazione sicura
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (url !== mainWindow.webContents.getURL()) event.preventDefault();
   });
 
-  // Logica Privacy Blur
   let blurTimer = null;
   let blurTimestamp = 0;
   
   mainWindow.on('blur', () => {
     blurTimestamp = Date.now();
     mainWindow.webContents.send('app-blur', true);
-    // Blocca il vault dopo 5 minuti di inattività
     blurTimer = setTimeout(() => { 
         if(mainWindow) mainWindow._shouldLockOnFocus = true; 
     }, 5 * 60 * 1000);
@@ -228,9 +250,7 @@ function createWindow() {
 
   mainWindow.on('focus', () => {
     if (blurTimer) { clearTimeout(blurTimer); blurTimer = null; }
-    if (Date.now() - blurTimestamp < 200) { /* debounce */ }
     mainWindow.webContents.send('app-blur', false);
-
     if (mainWindow._shouldLockOnFocus) {
       mainWindow._shouldLockOnFocus = false;
       mainWindow.webContents.send('app-lock');

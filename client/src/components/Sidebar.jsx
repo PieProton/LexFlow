@@ -14,9 +14,8 @@ import logo from '../assets/logo.png';
 export default function Sidebar({ version, onLock }) {
   const location = useLocation();
 
-  // Elementi della navigazione principale - Dashboard al primo posto
+  // Elementi della navigazione principale (esclusa Dashboard per posizionamento separato)
   const navItems = [
-    { path: '/', label: 'Dashboard', icon: LayoutDashboard },
     { path: '/pratiche', label: 'Fascicoli', icon: Briefcase },
     { path: '/scadenze', label: 'Scadenze', icon: CalendarClock },
     { path: '/agenda', label: 'Agenda', icon: CalendarDays },
@@ -80,6 +79,11 @@ export default function Sidebar({ version, onLock }) {
       {/* Navigazione */}
       <nav className="flex-1 px-4 py-2 space-y-8 overflow-y-auto custom-scrollbar">
         
+        {/* Dashboard - Ora posizionata sopra al Menu Principale */}
+        <div className="space-y-1.5">
+          <NavItem item={{ path: '/', label: 'Dashboard', icon: LayoutDashboard }} />
+        </div>
+
         {/* Gruppo Principale */}
         <div className="space-y-1.5">
           <div className="px-4 mb-3 text-[10px] font-black text-text-dim/40 uppercase tracking-[3px]">
@@ -104,10 +108,10 @@ export default function Sidebar({ version, onLock }) {
       {/* Footer con Azioni di Sicurezza */}
       <div className="p-6 border-t border-white/5 bg-[#0a0b12]">
         
-        {/* Tasto Blocca Vault con stile Alert */}
+        {/* Tasto Blocca Vault - Ora permanentemente rosso e visibile */}
         <button
           onClick={onLock}
-          className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-2xl text-text-dim hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all duration-300 group mb-6"
+          className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-2xl text-red-500 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 transition-all duration-300 group mb-6"
         >
           <Lock size={18} className="transition-transform group-hover:-rotate-12" />
           <span className="font-black text-[11px] uppercase tracking-widest">Blocca Vault</span>
