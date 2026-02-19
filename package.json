@@ -18,8 +18,10 @@
     "copy-win": "VER=$(node -p \"require('./package.json').version\") && mkdir -p ~/Desktop/\"Le Mie App\"/LexFlow && rm -f ~/Desktop/\"Le Mie App\"/LexFlow/*.exe && for f in release/\"LexFlow Setup\"*.exe; do cp \"$f\" ~/Desktop/\"Le Mie App\"/LexFlow/LexFlow_${VER}.exe 2>/dev/null; done; true"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.10.0",
     "electron": "^40.2.1",
-    "electron-builder": "^26.7.0"
+    "electron-builder": "^26.7.0",
+    "vite": "^7.3.1"
   },
   "build": {
     "appId": "com.technojaw.lexflow",
