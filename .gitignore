@@ -1,22 +1,42 @@
-# Dipendenze (I COLPEVOLI DEI 6GB)
+# Dependencies
 node_modules/
 client/node_modules/
 
-# File di Build e Release
-dist/
+# Build output — Tauri
+src-tauri/target/
+src-tauri/gen/
 client/dist/
-build/
-release/
-out/
+releases/
 
-# Binari specifici
+# Build artifacts
 *.dmg
 *.exe
 *.blockmap
-*.yml
+*.ipa
+*.apk
+# NON ignorare *.yml — serve per GitHub Actions workflows
 
-# Sistema e Editor
+# OS files
 .DS_Store
-.vscode/
+Thumbs.db
+
+# Environment
 .env
+.env.local
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
 *.log
+npm-debug.log*
+
+# Temp
+*.tmp
+*.bak
+
+# LexFlow License keys (private — never commit!)
+scripts/.lexflow-keys.json
