@@ -170,7 +170,10 @@ export default function App() {
   const loadAllData = useCallback(async () => {
     if (!window.api) return;
     try {
-      const pracs = await window.api.loadPractices().catch(() => []) || [];
+      const pracs = (await window.api.loadPractices().catch(() => []) || []).map(p => ({
+        ...p,
+        biometricProtected: p.biometricProtected !== false, // default true per tutti
+      }));
       const agenda = await window.api.loadAgenda().catch(() => []) || [];
       const currentSettings = await window.api.getSettings().catch(() => ({}));
       

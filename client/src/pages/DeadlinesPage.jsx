@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { CalendarClock, ChevronRight, AlertTriangle, Clock, Sun, Sunrise, Moon, Sunset, Check } from 'lucide-react';
+import { CalendarClock, ChevronRight, AlertTriangle, Clock, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const TYPE_LABELS = { civile: 'Civile', penale: 'Penale', amm: 'Amministrativo', stra: 'Stragiudiziale' };
-const TYPE_BADGE = { civile: 'badge-civile', penale: 'badge-penale', amm: 'badge-amm', stra: 'badge-stra' };
 
 export default function DeadlinesPage({ practices, onSelectPractice, settings }) {
   const today = new Date();
@@ -57,22 +56,22 @@ export default function DeadlinesPage({ practices, onSelectPractice, settings })
 
   const DeadlineRow = ({ d }) => (
     <div
-      className="flex items-center gap-3 p-3 rounded-lg bg-background/50 hover:bg-card-hover transition cursor-pointer group"
+      className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] transition cursor-pointer group border border-white/5 hover:border-white/10"
       onClick={() => onSelectPractice(d.practiceId)}
     >
       <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-        d.diff < 0 ? 'bg-danger' : d.diff === 0 ? 'bg-warning' : d.diff <= 3 ? 'bg-warning' : 'bg-info'
+        d.diff < 0 ? 'bg-red-400' : d.diff === 0 ? 'bg-amber-400' : d.diff <= 3 ? 'bg-amber-400' : 'bg-blue-400'
       }`} />
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-text">{d.label}</p>
+        <p className="text-xs font-bold text-white">{d.label}</p>
         <div className="flex items-center gap-2 mt-0.5">
           <span className="text-[10px] text-text-dim">{d.client}</span>
-          <span className={`badge text-[8px] py-0 px-1 ${TYPE_BADGE[d.type]}`}>
+          <span className="text-[9px] text-text-dim/60 uppercase tracking-wider">
             {TYPE_LABELS[d.type]}
           </span>
         </div>
       </div>
-      <span className="text-[11px] text-text-dim">{formatDate(d.date)}</span>
+      <div className="text-[10px] font-mono text-text-dim bg-white/5 px-2 py-0.5 rounded">{formatDate(d.date)}</div>
       <ChevronRight size={14} className="text-text-dim group-hover:text-primary transition flex-shrink-0" />
     </div>
   );
@@ -81,8 +80,8 @@ export default function DeadlinesPage({ practices, onSelectPractice, settings })
     if (items.length === 0) return null;
     return (
       <div className="mb-6">
-        <h3 className={`text-xs font-semibold mb-2 ${color}`}>{title} ({items.length})</h3>
-        <div className="space-y-1">
+        <h3 className="text-[10px] font-black text-text-dim uppercase tracking-[2px] mb-3">{title} ({items.length})</h3>
+        <div className="space-y-2">
           {items.map((d, i) => <DeadlineRow key={i} d={d} />)}
         </div>
       </div>
@@ -94,38 +93,40 @@ export default function DeadlinesPage({ practices, onSelectPractice, settings })
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-text flex items-center gap-2">
-            <CalendarClock size={22} className="text-warning" />
+          <h1 className="text-2xl font-black text-white flex items-center gap-3 tracking-tight">
+            <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center">
+              <CalendarClock size={20} className="text-text-muted" />
+            </div>
             Scadenze
           </h1>
-          <p className="text-text-muted text-sm mt-0.5">{allDeadlines.length} scadenz{allDeadlines.length === 1 ? 'a' : 'e'} totali</p>
+          <p className="text-text-dim text-xs mt-1.5 uppercase tracking-[2px] font-bold">{allDeadlines.length} scadenz{allDeadlines.length === 1 ? 'a' : 'e'} totali</p>
         </div>
       </div>
 
       {/* 3 Stat Cards + Briefing Widget */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        {/* In Scadenza Oggi — muted red */}
-        <div className="glass-card p-4 border-l-4 border-[#c94f4f]">
-          <p className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-1">In Scadenza Oggi</p>
-          <p className="text-3xl font-black text-[#c94f4f]">{todayDeadlines.length}</p>
+        {/* In Scadenza Oggi */}
+        <div className="glass-card p-5 border border-white/5">
+          <p className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-2">In Scadenza Oggi</p>
+          <p className="text-3xl font-black text-white">{todayDeadlines.length}</p>
           <p className="text-[10px] text-text-dim mt-1">
             {todayDeadlines.length === 0 ? 'Nessuna scadenza' : todayDeadlines.map(d => d.label).join(', ')}
           </p>
         </div>
 
-        {/* In Ritardo — muted orange */}
-        <div className="glass-card p-4 border-l-4 border-[#c27636]">
-          <p className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-1">In Ritardo</p>
-          <p className="text-3xl font-black text-[#c27636]">{pastDeadlines.length}</p>
+        {/* In Ritardo */}
+        <div className="glass-card p-5 border border-white/5">
+          <p className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-2">In Ritardo</p>
+          <p className={`text-3xl font-black ${pastDeadlines.length > 0 ? 'text-red-400' : 'text-white'}`}>{pastDeadlines.length}</p>
           <p className="text-[10px] text-text-dim mt-1">
             {pastDeadlines.length === 0 ? 'Tutto in regola' : `${pastDeadlines.length} scadenz${pastDeadlines.length === 1 ? 'a' : 'e'} superat${pastDeadlines.length === 1 ? 'a' : 'e'}`}
           </p>
         </div>
 
-        {/* Prossimi 30 giorni — muted green */}
-        <div className="glass-card p-4 border-l-4 border-[#4a9c6d]">
-          <p className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-1">Prossimi 30 Giorni</p>
-          <p className="text-3xl font-black text-[#4a9c6d]">{next30.length}</p>
+        {/* Prossimi 30 giorni */}
+        <div className="glass-card p-5 border border-white/5">
+          <p className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-2">Prossimi 30 Giorni</p>
+          <p className="text-3xl font-black text-white">{next30.length}</p>
           <p className="text-[10px] text-text-dim mt-1">
             {next30.length === 0 ? 'Calendario libero' : `${next30.length} in arrivo`}
           </p>
@@ -142,24 +143,16 @@ export default function DeadlinesPage({ practices, onSelectPractice, settings })
             )}
           </div>
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 text-xs text-text-muted">
-                <Sunrise size={14} className="text-amber-400" /> Mattina
-              </span>
-              <input type="time" className="input-field bg-black/20 border-white/5 w-24 text-center text-xs py-1" value={briefingMattina} onChange={onBriefingChange(setBriefingMattina)} />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 text-xs text-text-muted">
-                <Sun size={14} className="text-orange-400" /> Pomeriggio
-              </span>
-              <input type="time" className="input-field bg-black/20 border-white/5 w-24 text-center text-xs py-1" value={briefingPomeriggio} onChange={onBriefingChange(setBriefingPomeriggio)} />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 text-xs text-text-muted">
-                <Moon size={14} className="text-sky-400" /> Sera
-              </span>
-              <input type="time" className="input-field bg-black/20 border-white/5 w-24 text-center text-xs py-1" value={briefingSera} onChange={onBriefingChange(setBriefingSera)} />
-            </div>
+            {[
+              { label: 'Mattina', value: briefingMattina, onChange: onBriefingChange(setBriefingMattina) },
+              { label: 'Pomeriggio', value: briefingPomeriggio, onChange: onBriefingChange(setBriefingPomeriggio) },
+              { label: 'Sera', value: briefingSera, onChange: onBriefingChange(setBriefingSera) },
+            ].map(({ label, value, onChange }) => (
+              <div key={label} className="flex items-center justify-between bg-white/[0.03] rounded-lg px-3 py-2 border border-white/5">
+                <span className="text-xs text-white font-medium">{label}</span>
+                <input type="time" className="bg-black/30 border border-white/10 rounded-lg px-2.5 py-1 text-xs text-white font-mono text-center focus:border-primary/50 focus:ring-1 focus:ring-primary/20 outline-none transition-all w-20" value={value} onChange={onChange} />
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -170,11 +163,11 @@ export default function DeadlinesPage({ practices, onSelectPractice, settings })
           <p className="text-text-muted text-sm">Nessuna scadenza impostata</p>
         </div>
       ) : (
-        <div className="glass-card p-5">
-          <Section title="Scadute" items={pastDeadlines} color="text-danger" />
-          <Section title="Oggi" items={todayDeadlines} color="text-warning" />
-          <Section title="Prossimi 7 giorni" items={weekDeadlines} color="text-info" />
-          <Section title="Future" items={futureDeadlines} color="text-text-muted" />
+        <div className="glass-card p-6">
+          <Section title="Scadute" items={pastDeadlines} />
+          <Section title="Oggi" items={todayDeadlines} />
+          <Section title="Prossimi 7 giorni" items={weekDeadlines} />
+          <Section title="Future" items={futureDeadlines} />
         </div>
       )}
     </div>

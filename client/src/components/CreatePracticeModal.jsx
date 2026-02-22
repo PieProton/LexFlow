@@ -22,6 +22,7 @@ export default function CreatePracticeModal({ onClose, onSave }) {
     code: '',
     description: '',
     status: 'active',
+    biometricProtected: true,
     attachments: [] // Stato per i file PDF
   });
 

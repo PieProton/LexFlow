@@ -23,25 +23,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
 
   const formatDate = (d) => new Date(d).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
 
-  // --- Biometric Protection ---
-  const handleBiometricProtection = async () => {
-    try {
-      const bioAvailable = await window.api.checkBio();
-      if (!bioAvailable) {
-        toast.error('Autenticazione biometrica non disponibile su questo dispositivo');
-        return;
-      }
-      const result = await window.api.bioLogin();
-      if (result) {
-        const isProtected = !practice.biometricProtected;
-        update({ biometricProtected: isProtected });
-        toast.success(isProtected ? 'Fascicolo protetto con biometria' : 'Protezione biometrica rimossa');
-      }
-    } catch (e) {
-      toast.error('Autenticazione biometrica fallita');
-    }
-  };
-
+  // --- Biometric Verification ---
   const verifyBiometricAccess = async () => {
     try {
       const result = await window.api.bioLogin();
@@ -169,26 +151,12 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
   };
 
   // --- Components ---
-  const TabButton = ({ id, label, icon: Icon, count }) => (
-    <button
-      onClick={() => setActiveTab(id)}
-      className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-all ${
-        activeTab === id 
-          ? 'border-primary text-primary bg-primary/5' 
-          : 'border-transparent text-text-dim hover:text-white hover:bg-white/5'
-      }`}
-    >
-      <Icon size={16} />
-      {label}
-      {count > 0 && (
-        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ml-1 ${
-          activeTab === id ? 'bg-primary/20 text-primary' : 'bg-[#22263a] text-text-dim'
-        }`}>
-          {count}
-        </span>
-      )}
-    </button>
-  );
+  const TABS = [
+    { id: 'diary', label: 'Diario', icon: Clock, count: (practice.diary || []).length },
+    { id: 'docs', label: 'Documenti', icon: FileText, count: (practice.attachments || []).length },
+    { id: 'deadlines', label: 'Scadenze', icon: Calendar, count: (practice.deadlines || []).length },
+    { id: 'info', label: 'Info', icon: Info, count: 0 },
+  ];
 
   return (
     <div className="h-full flex flex-col bg-[#0c0d14] animate-fade-in">
@@ -201,6 +169,9 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-xl font-bold text-white">{practice.client}</h1>
+              {practice.biometricProtected && (
+                <ShieldCheck size={16} className="text-primary/60" title="Protetto con biometria" />
+              )}
             </div>
             <p className="text-xs text-text-dim mt-0.5">
               {practice.code ? `RG ${practice.code}` : practice.object}
@@ -209,20 +180,6 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
         </div>
         
         <div className="flex items-center gap-2">
-          {/* Pulsante Proteggi con Biometria */}
-          <button 
-            onClick={handleBiometricProtection}
-            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
-              practice.biometricProtected
-                ? 'bg-primary/10 text-primary border-primary/20 hover:bg-primary/20'
-                : 'bg-white/5 text-text-muted border-white/10 hover:bg-white/10 hover:text-white'
-            }`}
-            title={practice.biometricProtected ? 'Rimuovi protezione biometrica' : 'Proteggi con biometria'}
-          >
-            <Fingerprint size={14} />
-            {practice.biometricProtected ? 'Protetto' : 'Proteggi'}
-          </button>
-
           {/* Dropdown Status — Design moderno */}
           <div className="relative">
             <button 
@@ -260,12 +217,31 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex border-b border-[#22263a] px-6">
-        <TabButton id="diary" label="Diario Cronologico" icon={Clock} count={(practice.diary || []).length} />
-        <TabButton id="docs" label="Documenti" icon={FileText} count={(practice.attachments || []).length} />
-        <TabButton id="deadlines" label="Scadenze" icon={Calendar} count={(practice.deadlines || []).length} />
-        <TabButton id="info" label="Info Pratica" icon={Info} />
+      {/* Tabs — Segmented Control moderno */}
+      <div className="px-6 py-3 border-b border-[#22263a]">
+        <div className="inline-flex bg-white/[0.04] rounded-xl p-1 border border-white/5">
+          {TABS.map(({ id, label, icon: Icon, count }) => (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all duration-200 ${
+                activeTab === id 
+                  ? 'bg-primary text-black shadow-[0_0_12px_rgba(212,169,64,0.25)]' 
+                  : 'text-text-dim hover:text-white hover:bg-white/[0.06]'
+              }`}
+            >
+              <Icon size={14} />
+              {label}
+              {count > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  activeTab === id ? 'bg-black/20 text-black' : 'bg-white/10 text-text-dim'
+                }`}>
+                  {count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Content Area */}

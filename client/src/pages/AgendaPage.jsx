@@ -109,7 +109,7 @@ function EventModal({ event, date, onSave, onDelete, onClose }) {
           <div className="grid grid-cols-3 gap-3">
             <div>
                <label className="text-[10px] font-bold text-text-dim uppercase mb-1 block">Data</label>
-               <input type="date" className="input-field bg-black/20 border-white/5" value={evDate} onChange={e => setEvDate(e.target.value)} />
+               <input type="date" className="bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white font-mono text-center focus:border-primary/50 focus:ring-1 focus:ring-primary/20 outline-none transition-all w-full" value={evDate} onChange={e => setEvDate(e.target.value)} />
             </div>
             <div>
                <label className="text-[10px] font-bold text-text-dim uppercase mb-1 block">Inizio</label>
