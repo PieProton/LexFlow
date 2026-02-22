@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   ArrowLeft, Calendar, FileText, 
   Clock, Plus, X, Trash2, Send, FolderOpen, 
@@ -12,6 +12,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
   const [activeTab, setActiveTab] = useState('diary'); // diary, docs, deadlines, info
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [biometricVerified, setBiometricVerified] = useState(false);
+  const [bioAttempted, setBioAttempted] = useState(false);
   
   // Stati per i form
   const [newNote, setNewNote] = useState('');
@@ -23,13 +24,30 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
 
   const formatDate = (d) => new Date(d).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
 
-  // --- Biometric Verification ---
-  const verifyBiometricAccess = async () => {
+  // --- Sblocco biometrico AUTOMATICO al mount ---
+  useEffect(() => {
+    if (practice.biometricProtected && !biometricVerified && !bioAttempted) {
+      setBioAttempted(true);
+      (async () => {
+        try {
+          const result = await window.api.bioLogin();
+          if (result) {
+            setBiometricVerified(true);
+          }
+        } catch (e) {
+          // L'utente ha rifiutato o fallito, resta sulla schermata di blocco
+        }
+      })();
+    }
+  }, [practice.biometricProtected, biometricVerified, bioAttempted]);
+
+  const retryBiometric = async () => {
     try {
       const result = await window.api.bioLogin();
       if (result) {
         setBiometricVerified(true);
-        toast.success('Accesso verificato');
+      } else {
+        toast.error('Autenticazione non riuscita');
       }
     } catch (e) {
       toast.error('Autenticazione fallita');
@@ -51,16 +69,20 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
         </div>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center space-y-6">
-            <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto border border-primary/20">
+            <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto border border-primary/20 animate-pulse">
               <Fingerprint size={36} className="text-primary" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-white mb-2">Fascicolo Protetto</h2>
-              <p className="text-sm text-text-muted max-w-xs">Questo fascicolo richiede l'autenticazione biometrica per l'accesso.</p>
+              <h2 className="text-xl font-bold text-white mb-2">Verifica Identità</h2>
+              <p className="text-sm text-text-muted max-w-xs">
+                {bioAttempted ? 'Autenticazione non riuscita. Riprova.' : 'Autenticazione biometrica in corso...'}
+              </p>
             </div>
-            <button onClick={verifyBiometricAccess} className="btn-primary px-8 py-3 text-sm">
-              <Fingerprint size={18} /> Sblocca con Biometria
-            </button>
+            {bioAttempted && (
+              <button onClick={retryBiometric} className="btn-primary px-8 py-3 text-sm">
+                <Fingerprint size={18} /> Riprova
+              </button>
+            )}
           </div>
         </div>
       </div>

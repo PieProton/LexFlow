@@ -9,12 +9,10 @@ import {
   Trash2, 
   ExternalLink, 
   Calendar, 
-  Filter, 
   AlertCircle, 
   BarChart3,
   Bell,
-  BellRing,
-  Settings2
+  BellRing
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -313,20 +311,19 @@ function TodayView({ events, onToggle, onEdit, onAdd, activeFilters }) {
   }, []);
 
   return (
-    <div className="space-y-5 h-full flex flex-col">
-      <div className="flex items-center justify-between gap-4 flex-shrink-0">
+    <div className="h-full flex flex-col">
+      <div className="flex items-center justify-between gap-4 flex-shrink-0 mb-4">
         <div>
-          <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+          <h2 className="text-xl font-black text-white tracking-tight">
              {DAYS_IT[now.getDay()]} <span className="text-primary">{now.getDate()}</span> {MONTHS_IT[now.getMonth()]}
           </h2>
-          <p className="text-text-muted text-xs mt-1 font-medium">Panoramica giornaliera</p>
         </div>
-        <button onClick={() => onAdd(todayStr)} className="btn-primary">
-          <Plus size={16} strokeWidth={2.5}/> Nuovo Impegno
+        <button onClick={() => onAdd(todayStr)} className="btn-primary text-xs px-4 py-2">
+          <Plus size={14} strokeWidth={3}/> Nuovo
         </button>
       </div>
 
-      <div className="glass-card flex-1 overflow-hidden relative border-t border-white/5">
+      <div className="glass-card flex-1 overflow-hidden relative">
          {todayEvts.length === 0 ? (
             <EmptyState 
               message={allToday.length === 0 ? "Giornata Libera" : "Nessun impegno trovato"}
@@ -419,17 +416,19 @@ function WeekView({ events, onEdit, onAdd, activeFilters }) {
   const filtered = activeFilters.length > 0 ? events.filter(e => activeFilters.includes(e.category)) : events;
 
   return (
-    <div className="space-y-4 h-full flex flex-col">
-      <div className="flex items-center justify-between flex-shrink-0">
-        <div className="glass-card flex items-center p-1 gap-2">
-          <button onClick={() => setWeekOffset(w => w-1)} className="btn-ghost w-8 h-8 p-0"><ChevronLeft size={16}/></button>
-          <span className="text-sm font-bold w-32 text-center text-white">{days[0].date.getDate()} - {days[6].date.getDate()} {MONTHS_IT[days[6].date.getMonth()].slice(0,3)}</span>
-          <button onClick={() => setWeekOffset(w => w+1)} className="btn-ghost w-8 h-8 p-0"><ChevronRight size={16}/></button>
+    <div className="h-full flex flex-col">
+      <div className="flex items-center justify-between flex-shrink-0 mb-4">
+        <div className="inline-flex items-center bg-white/[0.04] rounded-xl p-1 border border-white/5 gap-1">
+          <button onClick={() => setWeekOffset(w => w-1)} className="btn-ghost w-7 h-7 p-0 rounded-lg"><ChevronLeft size={14}/></button>
+          <span className="text-xs font-bold w-36 text-center text-white">{days[0].date.getDate()} – {days[6].date.getDate()} {MONTHS_IT[days[6].date.getMonth()]}</span>
+          <button onClick={() => setWeekOffset(w => w+1)} className="btn-ghost w-7 h-7 p-0 rounded-lg"><ChevronRight size={14}/></button>
         </div>
-        <button onClick={() => onAdd(todayStr)} className="btn-primary"><Plus size={16}/> Nuovo</button>
+        <button onClick={() => onAdd(todayStr)} className="btn-primary text-xs px-4 py-2">
+          <Plus size={14} strokeWidth={3}/> Nuovo
+        </button>
       </div>
 
-      <div className="glass-card flex-1 flex flex-col overflow-hidden border border-white/5">
+      <div className="glass-card flex-1 flex flex-col overflow-hidden">
         <div className="grid grid-cols-[50px_repeat(7,1fr)] border-b border-white/5 bg-black/20">
           <div/>
           {days.map(({date, str}) => {
@@ -516,16 +515,18 @@ function MonthView({ events, onEdit, onAdd, activeFilters }) {
   const filtered = activeFilters.length > 0 ? events.filter(e => activeFilters.includes(e.category)) : events;
 
   return (
-    <div className="space-y-4 h-full flex flex-col">
-       <div className="flex items-center justify-between flex-shrink-0">
-        <div className="glass-card flex items-center p-1 gap-2">
-          <button onClick={() => setMonthOffset(m => m-1)} className="btn-ghost w-8 h-8 p-0"><ChevronLeft size={16}/></button>
-          <span className="text-sm font-bold w-40 text-center text-white">{MONTHS_IT[month]} {year}</span>
-          <button onClick={() => setMonthOffset(m => m+1)} className="btn-ghost w-8 h-8 p-0"><ChevronRight size={16}/></button>
+    <div className="h-full flex flex-col">
+       <div className="flex items-center justify-between flex-shrink-0 mb-4">
+        <div className="inline-flex items-center bg-white/[0.04] rounded-xl p-1 border border-white/5 gap-1">
+          <button onClick={() => setMonthOffset(m => m-1)} className="btn-ghost w-7 h-7 p-0 rounded-lg"><ChevronLeft size={14}/></button>
+          <span className="text-xs font-bold w-36 text-center text-white">{MONTHS_IT[month]} {year}</span>
+          <button onClick={() => setMonthOffset(m => m+1)} className="btn-ghost w-7 h-7 p-0 rounded-lg"><ChevronRight size={14}/></button>
         </div>
-        <button onClick={() => onAdd(todayStr)} className="btn-primary"><Plus size={16}/> Nuovo</button>
+        <button onClick={() => onAdd(todayStr)} className="btn-primary text-xs px-4 py-2">
+          <Plus size={14} strokeWidth={3}/> Nuovo
+        </button>
       </div>
-      <div className="glass-card flex-1 flex flex-col overflow-hidden p-0 border border-white/5">
+      <div className="glass-card flex-1 flex flex-col overflow-hidden p-0">
         <div className="grid grid-cols-7 border-b border-white/5 bg-black/20">
           {['LUN','MAR','MER','GIO','VEN','SAB','DOM'].map((d, i) => (
             <div key={d} className={`text-center py-2 text-[10px] font-bold ${i>=5 ? 'text-primary' : 'text-text-dim'}`}>{d}</div>
@@ -683,6 +684,7 @@ export default function AgendaPage({ agendaEvents, onSaveAgenda, practices, onSe
   const [modalEvent, setModalEvent] = useState(null);
   const [activeFilters, setActiveFilters] = useState([]);
   const [showNotifPopup, setShowNotifPopup] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [localSettings, setLocalSettings] = useState(settings || {});
   const events = agendaEvents || [];
 
@@ -706,87 +708,109 @@ export default function AgendaPage({ agendaEvents, onSaveAgenda, practices, onSe
     { key: 'month', label: 'Mese', icon: Calendar } 
   ];
 
+  // Conteggio eventi prossimi per badge
+  const now = new Date();
+  const todayStr = toDateStr(now);
+  const upcomingCount = events.filter(e => e.date >= todayStr && !e.completed).length;
+
   return (
-    <div className="main-content animate-slide-up h-screen flex flex-col overflow-hidden pb-4">
-      {/* BARRA SUPERIORE OTTIMIZZATA */}
-      <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 mb-4 px-1 flex-shrink-0">
-        
-        {/* Selettore Vista + Bell */}
-        <div className="flex items-center gap-2 self-start">
-          <div className="glass-card p-1 flex gap-1">
+    <div className="animate-slide-up h-full flex flex-col overflow-hidden">
+      
+      {/* ═══ HEADER — Compatto e pulito ═══ */}
+      <div className="flex items-center justify-between gap-4 mb-5 flex-shrink-0">
+        <div className="flex items-center gap-4">
+          {/* Titolo */}
+          <h1 className="text-2xl font-black text-white tracking-tight">Agenda</h1>
+          
+          {/* Vista Switcher */}
+          <div className="inline-flex bg-white/[0.04] rounded-xl p-1 border border-white/5">
             {views.map(({ key, label, icon: Icon }) => (
-              <button key={key} onClick={() => setView(key)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition ${view === key ? 'bg-primary text-black shadow-[0_0_15px_rgba(212,169,64,0.4)]' : 'text-text-muted hover:text-white hover:bg-white/5'}`}>
-                <Icon size={14}/> {label}
+              <button key={key} onClick={() => setView(key)} 
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 ${
+                  view === key 
+                    ? 'bg-primary text-black shadow-[0_0_12px_rgba(212,169,64,0.25)]' 
+                    : 'text-text-dim hover:text-white hover:bg-white/[0.06]'
+                }`}>
+                <Icon size={13}/> {label}
               </button>
             ))}
           </div>
+        </div>
+        
+        {/* Azioni rapide */}
+        <div className="flex items-center gap-2">
+          {/* Stats toggle */}
+          <button 
+            onClick={() => setShowStats(!showStats)} 
+            className={`p-2 rounded-xl transition-all border ${
+              showStats 
+                ? 'bg-primary/10 border-primary/20 text-primary' 
+                : 'bg-white/[0.04] border-white/5 text-text-dim hover:text-white hover:bg-white/[0.08]'
+            }`}
+            title="Statistiche"
+          >
+            <BarChart3 size={16} />
+          </button>
+          
+          {/* Bell */}
           <button 
             onClick={() => setShowNotifPopup(true)} 
-            className="glass-card p-2.5 rounded-xl hover:bg-white/5 transition-colors text-text-muted hover:text-amber-400 relative"
+            className="p-2 rounded-xl bg-white/[0.04] border border-white/5 hover:bg-white/[0.08] transition-all text-text-dim hover:text-white relative"
             title="Impostazioni Avvisi"
           >
-            <Bell size={18} />
+            <Bell size={16} />
             {localSettings?.notifyEnabled && (
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400" />
+              <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-primary" />
             )}
           </button>
         </div>
-
-        {/* BARRA FILTRI CATEGORIE - NUOVO DESIGN RESPONSIVE CON SCROLL ORIZZONTALE */}
-        <div className="flex items-center bg-black/30 rounded-xl border border-white/5 overflow-hidden max-w-full">
-          {/* Label Fisso */}
-          <div className="flex items-center gap-2 text-text-dim px-3 py-2 border-r border-white/5 flex-shrink-0 bg-white/[0.02]">
-            <Filter size={14} />
-            <span className="text-[9px] font-black uppercase tracking-widest hidden sm:inline">Filtra</span>
-          </div>
-          
-          {/* Contenitore Scrollabile */}
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-2 px-3 flex-1 scroll-smooth">
-            {Object.entries(CAT_LABELS).map(([key, label]) => {
-               const isActive = activeFilters.includes(key);
-               return (
-                  <button 
-                    key={key} 
-                    onClick={() => toggleFilter(key)} 
-                    className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border flex-shrink-0 ${
-                      isActive 
-                        ? 'border-transparent text-white shadow-[0_0_10px_rgba(0,0,0,0.5)] scale-105' 
-                        : 'border-white/5 text-text-dim hover:bg-white/5 hover:text-white'
-                    }`} 
-                    style={isActive ? { background: CAT_COLORS[key] } : {}}
-                  >
-                    {label}
-                  </button>
-               );
-            })}
-          </div>
-
-          {/* Reset button fisso se attivo */}
-          {activeFilters.length > 0 && (
-            <button 
-              onClick={() => setActiveFilters([])} 
-              className="px-3 py-2 text-text-dim hover:text-red-400 transition-colors border-l border-white/5 bg-white/[0.02] flex-shrink-0"
-              title="Pulisci filtri"
-            >
-              <X size={16}/>
-            </button>
-          )}
-        </div>
       </div>
 
-      {/* Grid Contenuto */}
-      <div className="grid gap-6 flex-1 overflow-hidden" style={{ gridTemplateColumns: '1fr minmax(240px, 280px)' }}>
+      {/* ═══ FILTRI — inline, minimalista ═══ */}
+      <div className="flex items-center gap-2 mb-4 flex-shrink-0 overflow-x-auto no-scrollbar">
+        {Object.entries(CAT_LABELS).map(([key, label]) => {
+          const isActive = activeFilters.includes(key);
+          return (
+            <button 
+              key={key} 
+              onClick={() => toggleFilter(key)} 
+              className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border flex-shrink-0 ${
+                isActive 
+                  ? 'border-transparent text-white shadow-md' 
+                  : 'border-white/5 text-text-dim hover:bg-white/5 hover:text-white bg-white/[0.02]'
+              }`} 
+              style={isActive ? { background: CAT_COLORS[key] } : {}}
+            >
+              {label}
+            </button>
+          );
+        })}
+        {activeFilters.length > 0 && (
+          <button 
+            onClick={() => setActiveFilters([])} 
+            className="px-2 py-1.5 text-text-dim hover:text-red-400 transition-colors flex-shrink-0"
+            title="Pulisci filtri"
+          >
+            <X size={14}/>
+          </button>
+        )}
+      </div>
+
+      {/* ═══ CONTENUTO PRINCIPALE ═══ */}
+      <div className={`flex-1 overflow-hidden grid gap-5 ${showStats ? 'grid-cols-[1fr_260px]' : 'grid-cols-1'}`} style={{ transition: 'grid-template-columns 0.3s' }}>
         <div className="overflow-hidden h-full">
           {view === 'today' && <TodayView events={events} onToggle={handleToggle} onEdit={openEdit} onAdd={openAdd} activeFilters={activeFilters} />}
           {view === 'week' && <WeekView events={events} onEdit={openEdit} onAdd={openAdd} activeFilters={activeFilters} />}
           {view === 'month' && <MonthView events={events} onEdit={openEdit} onAdd={openAdd} activeFilters={activeFilters} />}
         </div>
         
-        {/* Sidebar Destra */}
-        <div className="space-y-4 overflow-y-auto no-scrollbar pr-1 hidden md:block">
-          <StatsCard events={events} />
-          <UpcomingPanel events={events} onEdit={openEdit} onToggle={handleToggle} />
-        </div>
+        {/* Sidebar Destra — solo quando attivata */}
+        {showStats && (
+          <div className="space-y-4 overflow-y-auto no-scrollbar pr-1 animate-slide-up">
+            <StatsCard events={events} />
+            <UpcomingPanel events={events} onEdit={openEdit} onToggle={handleToggle} />
+          </div>
+        )}
       </div>
 
       {modalEvent && <EventModal event={modalEvent.event} onSave={handleSave} onDelete={handleDelete} onClose={() => setModalEvent(null)} />}
