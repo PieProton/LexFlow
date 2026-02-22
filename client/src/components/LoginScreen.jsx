@@ -94,8 +94,8 @@ export default function LoginScreen({ onUnlock }) {
     
     if (score <= 1) return { label: 'Debole', color: 'bg-red-500', pct: 20, segments: 1 };
     if (score <= 2) return { label: 'Sufficiente', color: 'bg-yellow-500', pct: 40, segments: 2 };
-    if (score <= 3) return { label: 'Buona', color: 'bg-blue-400', pct: 60, segments: 3 };
-    if (score <= 4) return { label: 'Forte', color: 'bg-indigo-500', pct: 80, segments: 4 };
+    if (score <= 3) return { label: 'Buona', color: 'bg-amber-400', pct: 60, segments: 3 };
+    if (score <= 4) return { label: 'Forte', color: 'bg-primary', pct: 80, segments: 4 };
     return { label: 'Eccellente', color: 'bg-emerald-500', pct: 100, segments: 5 };
   };
 
@@ -201,7 +201,7 @@ export default function LoginScreen({ onUnlock }) {
       
       {/* Background Decor */}
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/5 blur-[120px] rounded-full" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-500/5 blur-[120px] rounded-full" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-primary/5 blur-[120px] rounded-full" />
 
       {/* Recovery Code Modal */}
       {recoveryCode && (
