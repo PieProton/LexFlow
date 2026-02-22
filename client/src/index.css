@@ -230,7 +230,7 @@
     padding: 32px 40px;
     height: 100vh;
     overflow-y: auto;
-    background: linear-gradient(135deg, var(--bg) 0%, var(--bg) 70%, #1a1408 100%);
+    background: var(--bg);
     position: relative;
     scrollbar-width: none;
   }

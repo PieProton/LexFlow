@@ -14,10 +14,7 @@ import {
   BarChart3,
   Bell,
   BellRing,
-  Settings2,
-  Sunrise,
-  Sun,
-  Moon
+  Settings2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -116,7 +113,7 @@ function EventModal({ event, date, onSave, onDelete, onClose }) {
             </div>
             <div>
                <label className="text-[10px] font-bold text-text-dim uppercase mb-1 block">Inizio</label>
-               <input type="time" className="input-field bg-black/20 border-white/5" value={timeStart} onChange={e => {
+               <input type="time" className="bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white font-mono text-center focus:border-primary/50 focus:ring-1 focus:ring-primary/20 outline-none transition-all w-full" value={timeStart} onChange={e => {
                  setTimeStart(e.target.value);
                  const [h,m] = e.target.value.split(':').map(Number);
                  setTimeEnd(fmtTime(Math.min(h+1,23), m));
@@ -124,7 +121,7 @@ function EventModal({ event, date, onSave, onDelete, onClose }) {
             </div>
             <div>
                <label className="text-[10px] font-bold text-text-dim uppercase mb-1 block">Fine</label>
-               <input type="time" className="input-field bg-black/20 border-white/5" value={timeEnd} onChange={e => setTimeEnd(e.target.value)} />
+               <input type="time" className="bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white font-mono text-center focus:border-primary/50 focus:ring-1 focus:ring-primary/20 outline-none transition-all w-full" value={timeEnd} onChange={e => setTimeEnd(e.target.value)} />
             </div>
           </div>
 
@@ -654,28 +651,20 @@ function NotificationSettingsPopup({ settings, onSave, onClose }) {
             </button>
           </div>
 
-          {/* Orari Briefing — NO EMOJI, icone SVG */}
+          {/* Orari Briefing — Icone monocromatiche, design pulito */}
           <div>
             <label className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-3 block">Orari Briefing</label>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-sm text-text-muted">
-                  <Sunrise size={15} className="text-amber-400" /> Mattina
-                </span>
-                <input type="time" className="input-field bg-black/20 border-white/5 w-28 text-center" value={briefingMattina} onChange={e => setBriefingMattina(e.target.value)} />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-sm text-text-muted">
-                  <Sun size={15} className="text-orange-400" /> Pomeriggio
-                </span>
-                <input type="time" className="input-field bg-black/20 border-white/5 w-28 text-center" value={briefingPomeriggio} onChange={e => setBriefingPomeriggio(e.target.value)} />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-sm text-text-muted">
-                  <Moon size={15} className="text-sky-400" /> Sera
-                </span>
-                <input type="time" className="input-field bg-black/20 border-white/5 w-28 text-center" value={briefingSera} onChange={e => setBriefingSera(e.target.value)} />
-              </div>
+            <div className="space-y-2">
+              {[
+                { label: 'Mattina', value: briefingMattina, onChange: setBriefingMattina },
+                { label: 'Pomeriggio', value: briefingPomeriggio, onChange: setBriefingPomeriggio },
+                { label: 'Sera', value: briefingSera, onChange: setBriefingSera },
+              ].map(({ label, value, onChange }) => (
+                <div key={label} className="flex items-center justify-between bg-white/[0.03] rounded-xl px-4 py-3 border border-white/5">
+                  <span className="text-sm text-white font-medium">{label}</span>
+                  <input type="time" className="bg-black/30 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-mono text-center focus:border-primary/50 focus:ring-1 focus:ring-primary/20 outline-none transition-all w-24" value={value} onChange={e => onChange(e.target.value)} />
+                </div>
+              ))}
             </div>
           </div>
 

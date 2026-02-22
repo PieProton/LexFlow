@@ -3,7 +3,7 @@ import {
   ArrowLeft, Calendar, FileText, 
   Clock, Plus, X, Trash2, Send, FolderOpen, 
   FolderPlus, Archive, RotateCcw, Lock, ChevronDown,
-  FilePlus, Info
+  FilePlus, Info, Fingerprint, ShieldCheck
 } from 'lucide-react';
 import { exportPracticePDF } from '../utils/pdfGenerator';
 import toast from 'react-hot-toast';
@@ -11,6 +11,7 @@ import toast from 'react-hot-toast';
 export default function PracticeDetail({ practice, onBack, onUpdate }) {
   const [activeTab, setActiveTab] = useState('diary'); // diary, docs, deadlines, info
   const [showStatusMenu, setShowStatusMenu] = useState(false);
+  const [biometricVerified, setBiometricVerified] = useState(false);
   
   // Stati per i form
   const [newNote, setNewNote] = useState('');
@@ -21,6 +22,68 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
   const update = (changes) => onUpdate({ ...practice, ...changes });
 
   const formatDate = (d) => new Date(d).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  // --- Biometric Protection ---
+  const handleBiometricProtection = async () => {
+    try {
+      const bioAvailable = await window.api.checkBio();
+      if (!bioAvailable) {
+        toast.error('Autenticazione biometrica non disponibile su questo dispositivo');
+        return;
+      }
+      const result = await window.api.bioLogin();
+      if (result) {
+        const isProtected = !practice.biometricProtected;
+        update({ biometricProtected: isProtected });
+        toast.success(isProtected ? 'Fascicolo protetto con biometria' : 'Protezione biometrica rimossa');
+      }
+    } catch (e) {
+      toast.error('Autenticazione biometrica fallita');
+    }
+  };
+
+  const verifyBiometricAccess = async () => {
+    try {
+      const result = await window.api.bioLogin();
+      if (result) {
+        setBiometricVerified(true);
+        toast.success('Accesso verificato');
+      }
+    } catch (e) {
+      toast.error('Autenticazione fallita');
+    }
+  };
+
+  // Se il fascicolo è protetto e non verificato, mostra schermata di blocco
+  if (practice.biometricProtected && !biometricVerified) {
+    return (
+      <div className="h-full flex flex-col bg-[#0c0d14] animate-fade-in">
+        <div className="flex items-center px-6 py-4 border-b border-[#22263a]">
+          <button onClick={onBack} className="p-2 hover:bg-white/10 rounded-full transition-colors text-text-dim hover:text-white">
+            <ArrowLeft size={20} />
+          </button>
+          <div className="ml-4">
+            <h1 className="text-xl font-bold text-white">{practice.client}</h1>
+            <p className="text-xs text-text-dim mt-0.5">{practice.code ? `RG ${practice.code}` : practice.object}</p>
+          </div>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-6">
+            <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto border border-primary/20">
+              <Fingerprint size={36} className="text-primary" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-white mb-2">Fascicolo Protetto</h2>
+              <p className="text-sm text-text-muted max-w-xs">Questo fascicolo richiede l'autenticazione biometrica per l'accesso.</p>
+            </div>
+            <button onClick={verifyBiometricAccess} className="btn-primary px-8 py-3 text-sm">
+              <Fingerprint size={18} /> Sblocca con Biometria
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // --- Handlers: Status & Folder ---
   const setStatus = (newStatus) => {
@@ -146,44 +209,50 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
         </div>
         
         <div className="flex items-center gap-2">
-          {/* Pulsante Proteggi */}
+          {/* Pulsante Proteggi con Biometria */}
           <button 
-            onClick={handleExport} 
-            className="btn-secondary text-xs flex items-center gap-2"
+            onClick={handleBiometricProtection}
+            className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
+              practice.biometricProtected
+                ? 'bg-primary/10 text-primary border-primary/20 hover:bg-primary/20'
+                : 'bg-white/5 text-text-muted border-white/10 hover:bg-white/10 hover:text-white'
+            }`}
+            title={practice.biometricProtected ? 'Rimuovi protezione biometrica' : 'Proteggi con biometria'}
           >
-            <Lock size={14} /> Proteggi
+            <Fingerprint size={14} />
+            {practice.biometricProtected ? 'Protetto' : 'Proteggi'}
           </button>
 
-          {/* Dropdown Status */}
+          {/* Dropdown Status — Design moderno */}
           <div className="relative">
             <button 
               onClick={() => setShowStatusMenu(!showStatusMenu)}
               className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold border transition-all ${
                 practice.status === 'active' 
-                  ? 'bg-green-500/10 text-green-400 border-green-500/20' 
-                  : 'bg-gray-500/10 text-gray-400 border-gray-500/20'
+                  ? 'bg-white/5 text-white border-white/10 hover:bg-white/10' 
+                  : 'bg-white/5 text-text-dim border-white/10 hover:bg-white/10'
               }`}
             >
-              <span className="w-2 h-2 rounded-full bg-current" />
+              <span className={`w-2 h-2 rounded-full ${practice.status === 'active' ? 'bg-emerald-400' : 'bg-text-dim'}`} />
               {practice.status === 'active' ? 'Attivo' : 'Archiviato'}
-              <ChevronDown size={14} />
+              <ChevronDown size={14} className="text-text-dim" />
             </button>
             
             {showStatusMenu && (
-              <div className="absolute right-0 top-full mt-2 bg-[#14151d] border border-white/10 rounded-xl shadow-2xl z-50 py-2 min-w-[200px] animate-fade-in">
+              <div className="absolute right-0 top-full mt-2 bg-[#14151d] border border-white/10 rounded-xl shadow-2xl z-50 py-1 min-w-[200px] animate-fade-in">
                 <button 
                   onClick={() => setStatus('active')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-white/5 transition-colors text-left"
+                  className={`w-full flex items-center gap-3 px-4 py-3 text-xs hover:bg-white/5 transition-colors text-left ${practice.status === 'active' ? 'bg-white/[0.03]' : ''}`}
                 >
-                  <span className="w-2 h-2 rounded-full bg-green-400" />
-                  <span className="text-green-400 font-bold">Imposta Attivo</span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  <span className="text-white font-medium">Attivo</span>
                 </button>
                 <button 
                   onClick={() => setStatus('closed')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-white/5 transition-colors text-left"
+                  className={`w-full flex items-center gap-3 px-4 py-3 text-xs hover:bg-white/5 transition-colors text-left ${practice.status === 'closed' ? 'bg-white/[0.03]' : ''}`}
                 >
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  <span className="text-amber-400 font-bold">Archivia Fascicolo</span>
+                  <span className="w-2 h-2 rounded-full bg-text-dim" />
+                  <span className="text-white font-medium">Archiviato</span>
                 </button>
               </div>
             )}
@@ -194,7 +263,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
       {/* Tabs */}
       <div className="flex border-b border-[#22263a] px-6">
         <TabButton id="diary" label="Diario Cronologico" icon={Clock} count={(practice.diary || []).length} />
-        <TabButton id="docs" label="Documentazione PDF" icon={FileText} count={(practice.attachments || []).length} />
+        <TabButton id="docs" label="Documenti" icon={FileText} count={(practice.attachments || []).length} />
         <TabButton id="deadlines" label="Scadenze" icon={Calendar} count={(practice.deadlines || []).length} />
         <TabButton id="info" label="Info Pratica" icon={Info} />
       </div>
@@ -259,56 +328,62 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
           </div>
         )}
 
-        {/* ═══ TAB: DOCUMENTAZIONE PDF ═══ */}
+        {/* ═══ TAB: DOCUMENTI ═══ */}
         {activeTab === 'docs' && (
           <div className="max-w-3xl mx-auto">
             {/* 2 Card azione */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
               <div 
                 onClick={handleUploadPDF}
-                className="glass-card p-8 flex items-start gap-4 cursor-pointer hover:bg-white/5 hover:border-primary/20 transition-all border border-white/5 group"
+                className="glass-card p-6 flex items-center gap-4 cursor-pointer hover:bg-white/5 hover:border-white/15 transition-all border border-white/5 group"
               >
                 <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
                   <FilePlus size={24} className="text-primary" />
                 </div>
                 <div>
-                  <p className="text-base font-bold text-white">Carica PDF</p>
-                  <p className="text-[10px] text-text-dim uppercase tracking-wider mt-1">Aggiungi file al vault</p>
+                  <p className="text-base font-bold text-white">Carica Documento</p>
+                  <p className="text-[10px] text-text-dim uppercase tracking-wider mt-1">Aggiungi file al vault crittografato</p>
                 </div>
               </div>
 
-              <div 
-                onClick={openFolder}
-                className={`glass-card p-8 flex items-start gap-4 border border-white/5 transition-all ${
-                  practice.folderPath 
-                    ? 'cursor-pointer hover:bg-white/5 hover:border-white/20' 
-                    : 'opacity-50'
-                }`}
-              >
-                <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center flex-shrink-0">
-                  <FolderOpen size={24} className="text-text-muted" />
+              {practice.folderPath ? (
+                <div 
+                  onClick={openFolder}
+                  className="glass-card p-6 flex items-center gap-4 border border-white/5 cursor-pointer hover:bg-white/5 hover:border-white/15 transition-all group"
+                >
+                  <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                    <FolderOpen size={24} className="text-text-muted" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-base font-bold text-white">Apri Cartella</p>
+                    <p className="text-[10px] text-text-dim uppercase tracking-wider mt-1 truncate">{practice.folderPath.split('/').pop()}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-base font-bold text-white">Sfoglia Locale</p>
-                  <p className="text-[10px] text-text-dim uppercase tracking-wider mt-1">Apri cartella collegata</p>
+              ) : (
+                <div 
+                  onClick={linkFolder}
+                  className="glass-card p-6 flex items-center gap-4 border border-dashed border-white/10 cursor-pointer hover:bg-white/5 hover:border-white/20 transition-all group"
+                >
+                  <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                    <FolderPlus size={24} className="text-text-dim group-hover:text-white transition-colors" />
+                  </div>
+                  <div>
+                    <p className="text-base font-bold text-white">Collega Cartella</p>
+                    <p className="text-[10px] text-text-dim uppercase tracking-wider mt-1">Associa una cartella locale al fascicolo</p>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
-
-            {/* Se non c'è cartella collegata: pulsante collega */}
-            {!practice.folderPath && (
-              <div className="text-center mb-6">
-                <button onClick={linkFolder} className="btn-secondary text-xs">
-                  <FolderPlus size={14} /> Collega una cartella locale
-                </button>
-              </div>
-            )}
 
             {/* Lista allegati crittografati */}
             <div>
-              <h3 className="text-[10px] font-black text-text-dim uppercase tracking-[2px] mb-4">Allegati Crittografati</h3>
+              <h3 className="text-[10px] font-black text-text-dim uppercase tracking-[2px] mb-4">Documenti Allegati</h3>
               {(!practice.attachments || practice.attachments.length === 0) ? (
-                <p className="text-sm text-text-dim italic">Nessun PDF collegato.</p>
+                <div className="glass-card p-8 flex flex-col items-center justify-center text-center border border-dashed border-white/10">
+                  <FileText size={28} className="text-text-dim/30 mb-3" />
+                  <p className="text-sm text-text-dim">Nessun documento allegato</p>
+                  <p className="text-xs text-text-dim/60 mt-1">Carica PDF o documenti nel vault crittografato</p>
+                </div>
               ) : (
                 <div className="space-y-2">
                   {practice.attachments.map((att, idx) => (

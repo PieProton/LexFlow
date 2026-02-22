@@ -125,9 +125,9 @@ export default function Dashboard({ practices, agendaEvents, onNavigate, onSelec
 
       {/* ═══ 3 STAT CARDS ═══ */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="glass-card p-5 flex items-center gap-4 border border-white/5 hover:border-primary/20 transition-colors">
-          <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-            <Briefcase size={20} className="text-primary" />
+        <div className="glass-card p-5 flex items-center gap-4 border border-white/5 hover:border-white/10 transition-colors">
+          <div className="w-11 h-11 rounded-xl bg-white/5 flex items-center justify-center flex-shrink-0">
+            <Briefcase size={20} className="text-text-muted" />
           </div>
           <div>
             <p className="text-2xl font-black text-white tabular-nums">{stats.activeCount}</p>
@@ -135,9 +135,9 @@ export default function Dashboard({ practices, agendaEvents, onNavigate, onSelec
           </div>
         </div>
 
-        <div className="glass-card p-5 flex items-center gap-4 border border-white/5 hover:border-purple-500/20 transition-colors">
-          <div className="w-11 h-11 rounded-xl bg-purple-500/10 flex items-center justify-center flex-shrink-0">
-            <CalendarDays size={20} className="text-purple-400" />
+        <div className="glass-card p-5 flex items-center gap-4 border border-white/5 hover:border-white/10 transition-colors">
+          <div className="w-11 h-11 rounded-xl bg-white/5 flex items-center justify-center flex-shrink-0">
+            <CalendarDays size={20} className="text-text-muted" />
           </div>
           <div>
             <p className="text-2xl font-black text-white tabular-nums">{stats.totalAgenda}</p>
@@ -145,9 +145,9 @@ export default function Dashboard({ practices, agendaEvents, onNavigate, onSelec
           </div>
         </div>
 
-        <div className="glass-card p-5 flex items-center gap-4 border border-white/5 hover:border-warning/20 transition-colors">
-          <div className="w-11 h-11 rounded-xl bg-warning/10 flex items-center justify-center flex-shrink-0">
-            <CalendarClock size={20} className="text-warning" />
+        <div className="glass-card p-5 flex items-center gap-4 border border-white/5 hover:border-white/10 transition-colors">
+          <div className="w-11 h-11 rounded-xl bg-white/5 flex items-center justify-center flex-shrink-0">
+            <CalendarClock size={20} className="text-text-muted" />
           </div>
           <div>
             <p className="text-2xl font-black text-white tabular-nums">{stats.deadlineCount}</p>

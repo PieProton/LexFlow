@@ -6,7 +6,8 @@ import {
   Briefcase, 
   Archive,
   CheckCircle2,
-  Filter
+  Filter,
+  Fingerprint
 } from 'lucide-react';
 
 // Mappa dei colori e stili per ogni materia
@@ -74,21 +75,21 @@ export default function PracticesList({ practices = [], onSelect, onNewPractice 
       </div>
 
       {/* Stats Bar - ORA CLICCABILI PER FILTRARE */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Totali */}
         <div 
           onClick={() => setFilterStatus('all')}
-          className={`glass-card p-6 flex items-center gap-5 border cursor-pointer transition-all duration-300 ${
+          className={`glass-card p-5 flex items-center gap-4 border cursor-pointer transition-all duration-300 ${
             filterStatus === 'all' 
-              ? 'border-primary/50 bg-primary/5 shadow-[0_0_20px_rgba(212,169,64,0.1)] scale-[1.02]' 
-              : 'border-white/5 hover:bg-white/5 opacity-70 hover:opacity-100'
+              ? 'border-primary/40 bg-primary/5 shadow-[0_0_15px_rgba(212,169,64,0.08)]' 
+              : 'border-white/5 hover:bg-white/[0.03] opacity-70 hover:opacity-100'
           }`}
         >
-          <div className="w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center text-text-primary">
-            <Briefcase size={24} />
+          <div className="w-11 h-11 rounded-xl bg-white/5 flex items-center justify-center text-text-muted">
+            <Briefcase size={20} />
           </div>
           <div>
-            <div className="text-3xl font-black text-white leading-none mb-1">{stats.total}</div>
+            <div className="text-2xl font-black text-white leading-none mb-1">{stats.total}</div>
             <div className="text-[10px] text-text-dim uppercase tracking-[2px] font-bold">Totali</div>
           </div>
         </div>
@@ -96,17 +97,17 @@ export default function PracticesList({ practices = [], onSelect, onNewPractice 
         {/* Attivi */}
         <div 
           onClick={() => setFilterStatus('active')}
-          className={`glass-card p-6 flex items-center gap-5 border cursor-pointer transition-all duration-300 ${
+          className={`glass-card p-5 flex items-center gap-4 border cursor-pointer transition-all duration-300 ${
             filterStatus === 'active' 
-              ? 'border-emerald-500/50 bg-emerald-500/5 shadow-[0_0_20px_rgba(16,185,129,0.1)] scale-[1.02]' 
-              : 'border-white/5 hover:bg-white/5 opacity-70 hover:opacity-100'
+              ? 'border-primary/40 bg-primary/5 shadow-[0_0_15px_rgba(212,169,64,0.08)]' 
+              : 'border-white/5 hover:bg-white/[0.03] opacity-70 hover:opacity-100'
           }`}
         >
-          <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-500">
-            <CheckCircle2 size={24} />
+          <div className="w-11 h-11 rounded-xl bg-white/5 flex items-center justify-center text-text-muted">
+            <CheckCircle2 size={20} />
           </div>
           <div>
-            <div className="text-3xl font-black text-white leading-none mb-1">{stats.active}</div>
+            <div className="text-2xl font-black text-white leading-none mb-1">{stats.active}</div>
             <div className="text-[10px] text-text-dim uppercase tracking-[2px] font-bold">Attivi</div>
           </div>
         </div>
@@ -114,17 +115,17 @@ export default function PracticesList({ practices = [], onSelect, onNewPractice 
         {/* Chiusi */}
         <div 
           onClick={() => setFilterStatus('closed')}
-          className={`glass-card p-6 flex items-center gap-5 border cursor-pointer transition-all duration-300 ${
+          className={`glass-card p-5 flex items-center gap-4 border cursor-pointer transition-all duration-300 ${
             filterStatus === 'closed' 
-              ? 'border-white/40 bg-white/10 shadow-[0_0_20px_rgba(255,255,255,0.05)] scale-[1.02]' 
-              : 'border-white/5 hover:bg-white/5 opacity-70 hover:opacity-100'
+              ? 'border-primary/40 bg-primary/5 shadow-[0_0_15px_rgba(212,169,64,0.08)]' 
+              : 'border-white/5 hover:bg-white/[0.03] opacity-70 hover:opacity-100'
           }`}
         >
-          <div className="w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center text-text-dim">
-            <Archive size={24} />
+          <div className="w-11 h-11 rounded-xl bg-white/5 flex items-center justify-center text-text-muted">
+            <Archive size={20} />
           </div>
           <div>
-            <div className="text-3xl font-black text-white leading-none mb-1">{stats.closed}</div>
+            <div className="text-2xl font-black text-white leading-none mb-1">{stats.closed}</div>
             <div className="text-[10px] text-text-dim uppercase tracking-[2px] font-bold">Chiusi</div>
           </div>
         </div>
@@ -210,14 +211,18 @@ export default function PracticesList({ practices = [], onSelect, onNewPractice 
                     </div>
 
                     <div className="hidden lg:flex flex-col justify-center items-end pr-4">
-                      <div className={`text-[9px] px-3 py-1 rounded-full font-black uppercase tracking-widest border ${p?.status === 'active' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-white/5 text-text-dim border-white/10'}`}>
-                        {p?.status === 'active' ? 'Attivo' : 'Archiviato'}
+                      <div className={`text-[9px] px-3 py-1 rounded-full font-black uppercase tracking-widest border ${p?.status === 'active' ? 'bg-white/5 text-white border-white/10' : 'bg-white/5 text-text-dim border-white/10'}`}>
+                        <span className="flex items-center gap-1.5">
+                          <span className={`w-1.5 h-1.5 rounded-full ${p?.status === 'active' ? 'bg-emerald-400' : 'bg-text-dim'}`} />
+                          {p?.status === 'active' ? 'Attivo' : 'Archiviato'}
+                        </span>
                       </div>
                     </div>
                   </div>
                 </div>
                 
                 <div className="flex items-center gap-4">
+                   {p?.biometricProtected && <Fingerprint size={16} className="text-primary/60" title="Protetto con biometria" />}
                    <ChevronRight className="text-text-dim group-hover:text-primary group-hover:translate-x-1 transition-all" size={24} />
                 </div>
               </div>

@@ -249,7 +249,7 @@ export default function App() {
           activePage={location.pathname}
         />
 
-        <main className="flex-1 h-screen overflow-hidden relative flex flex-col bg-gradient-to-br from-background to-[#13141f]">
+        <main className="flex-1 h-screen overflow-hidden relative flex flex-col bg-background">
           <WindowControls />
           <Toaster
             position="bottom-right"

@@ -11,6 +11,15 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+const PREAVVISO_OPTIONS = [
+  { value: 0, label: 'Al momento' },
+  { value: 15, label: '15 min' },
+  { value: 30, label: '30 min' },
+  { value: 60, label: '1 ora' },
+  { value: 120, label: '2 ore' },
+  { value: 1440, label: '1 giorno' },
+];
+
 export default function SettingsPage({ onLock }) {
   const [privacyEnabled, setPrivacyEnabled] = useState(true);
   const [appVersion, setAppVersion] = useState('');
@@ -131,30 +140,27 @@ export default function SettingsPage({ onLock }) {
             </div>
 
             {notifyEnabled && (
-              <div className="flex items-center justify-between pt-4 border-t border-white/5">
-                <div className="flex items-center gap-3">
-                  <Clock size={18} className="text-text-dim" />
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-white">Preavviso notifiche</span>
-                    <span className="text-[10px] text-text-dim uppercase tracking-wider">Anticipo rispetto all'evento</span>
-                  </div>
+              <div className="pt-4 border-t border-white/5">
+                <label className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-3 block">Preavviso Standard</label>
+                <div className="flex flex-wrap gap-2">
+                  {PREAVVISO_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => {
+                        setNotificationTime(opt.value);
+                        saveNotifySettings({ notificationTime: opt.value });
+                      }}
+                      className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all border ${
+                        notificationTime === opt.value
+                          ? 'bg-primary text-black border-primary shadow-[0_0_12px_rgba(212,169,64,0.3)]'
+                          : 'bg-white/[0.04] text-text-muted border-white/5 hover:bg-white/[0.08] hover:text-white'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
                 </div>
-                <select 
-                  value={notificationTime}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value);
-                    setNotificationTime(val);
-                    saveNotifySettings({ notificationTime: val });
-                  }}
-                  className="bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs font-bold text-white focus:ring-1 focus:ring-primary outline-none cursor-pointer"
-                >
-                  <option value={0} className="bg-[#10111a]">Al momento dell'evento</option>
-                  <option value={15} className="bg-[#10111a]">15 minuti prima</option>
-                  <option value={30} className="bg-[#10111a]">30 minuti prima</option>
-                  <option value={60} className="bg-[#10111a]">1 ora prima</option>
-                  <option value={120} className="bg-[#10111a]">2 ore prima</option>
-                  <option value={1440} className="bg-[#10111a]">1 giorno prima</option>
-                </select>
               </div>
             )}
           </div>
