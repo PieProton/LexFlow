@@ -74,7 +74,7 @@ export default function LicenseScreen({ onActivated }) {
       {/* Sfondo decorativo */}
       <div style={{
         position: 'absolute', inset: 0,
-        background: 'radial-gradient(ellipse 60% 50% at 50% 40%, rgba(99,102,241,0.07) 0%, transparent 70%)',
+        background: 'radial-gradient(ellipse 60% 50% at 50% 40%, rgba(212,169,64,0.07) 0%, transparent 70%)',
         pointerEvents: 'none',
       }} />
 
@@ -82,19 +82,19 @@ export default function LicenseScreen({ onActivated }) {
       <div style={{
         position: 'relative', zIndex: 1,
         background: '#13141e',
-        border: '1px solid rgba(99,102,241,0.25)',
+        border: '1px solid rgba(212,169,64,0.25)',
         borderRadius: 24,
         padding: '40px 44px',
         width: '100%', maxWidth: 440,
-        boxShadow: '0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(99,102,241,0.1)',
+        boxShadow: '0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(212,169,64,0.1)',
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24,
       }}>
         {/* Icona */}
         <div style={{
           width: 72, height: 72, borderRadius: 20,
-          background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+          background: 'linear-gradient(135deg, #d4a940, #b8912e)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: '0 8px 32px rgba(99,102,241,0.4)',
+          boxShadow: '0 8px 32px rgba(212,169,64,0.4)',
         }}>
           <KeyRound size={34} color="#fff" strokeWidth={1.8} />
         </div>
@@ -128,16 +128,16 @@ export default function LicenseScreen({ onActivated }) {
               fontWeight: 700,
               letterSpacing: '0.12em',
               background: '#0c0d14',
-              color: error ? '#f87171' : '#c7d2fe',
-              border: `1.5px solid ${error ? 'rgba(248,113,113,0.5)' : 'rgba(99,102,241,0.3)'}`,
+              color: error ? '#f87171' : '#d4a940',
+              border: `1.5px solid ${error ? 'rgba(248,113,113,0.5)' : 'rgba(212,169,64,0.3)'}`,
               borderRadius: 12,
               outline: 'none',
               textAlign: 'center',
               boxSizing: 'border-box',
               transition: 'border-color 0.2s',
             }}
-            onFocus={e => { if (!error) e.target.style.borderColor = 'rgba(99,102,241,0.7)'; }}
-            onBlur={e => { if (!error) e.target.style.borderColor = 'rgba(99,102,241,0.3)'; }}
+            onFocus={e => { if (!error) e.target.style.borderColor = 'rgba(212,169,64,0.7)'; }}
+            onBlur={e => { if (!error) e.target.style.borderColor = 'rgba(212,169,64,0.3)'; }}
           />
 
           {/* Errore */}
@@ -159,8 +159,8 @@ export default function LicenseScreen({ onActivated }) {
           style={{
             width: '100%',
             padding: '14px',
-            background: loading ? 'rgba(99,102,241,0.5)' : 'linear-gradient(135deg, #6366f1, #4f46e5)',
-            color: '#fff',
+            background: loading ? 'rgba(212,169,64,0.5)' : 'linear-gradient(135deg, #d4a940, #b8912e)',
+            color: '#0c0d14',
             border: 'none',
             borderRadius: 12,
             fontSize: 14,
@@ -168,7 +168,7 @@ export default function LicenseScreen({ onActivated }) {
             cursor: loading ? 'not-allowed' : 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
             transition: 'all 0.2s',
-            boxShadow: loading ? 'none' : '0 4px 20px rgba(99,102,241,0.35)',
+            boxShadow: loading ? 'none' : '0 4px 20px rgba(212,169,64,0.35)',
           }}
         >
           {loading
