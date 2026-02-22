@@ -43,3 +43,8 @@ scripts/.lexflow-keys.json
 web-dist/
 release/
 electron/
+build/
+supabase/.temp/
+.tauri/
+.vite/
+.next/
