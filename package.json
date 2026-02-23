@@ -1,6 +1,6 @@
 {
   "name": "lexflow",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "LexFlow — Gestionale Studio Legale con Crittografia Zero-Knowledge",
   "author": "TechnoJaw",
   "private": true,
@@ -12,8 +12,6 @@
     "build:mac-arm": "npx @tauri-apps/cli build --target aarch64-apple-darwin --bundles app",
     "build:mac-intel": "npx @tauri-apps/cli build --target x86_64-apple-darwin --bundles app",
     "build:win": "npx @tauri-apps/cli build --target x86_64-pc-windows-msvc",
-    "build:ios": "npx @tauri-apps/cli ios build",
-    "build:android": "npx @tauri-apps/cli android build",
     "deploy:desktop": "echo \"Implement deploy:desktop workflow (see BUILD_MASTER.md)\"",
     "deploy:releases": "echo \"Implement deploy:releases workflow (see BUILD_MASTER.md)\"",
     "install": "npm run build && npm run deploy:desktop",
