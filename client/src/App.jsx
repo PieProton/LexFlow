@@ -27,6 +27,8 @@ export default function App() {
   const [isLocked, setIsLocked] = useState(true);
   const [blurred, setBlurred] = useState(false);
   const [privacyEnabled, setPrivacyEnabled] = useState(true);
+  const [screenshotProtection, setScreenshotProtection] = useState(true);
+  const [autolockMinutes, setAutolockMinutes] = useState(5);
   const [version, setVersion] = useState('');
   
   // --- STATI DEI DATI & NOTIFICHE ---
@@ -48,9 +50,41 @@ export default function App() {
       if (s) {
         setSettings(s);
         if (typeof s.privacyBlurEnabled === 'boolean') setPrivacyEnabled(s.privacyBlurEnabled);
+        if (typeof s.screenshotProtection === 'boolean') {
+          setScreenshotProtection(s.screenshotProtection);
+          window.api.setContentProtection?.(s.screenshotProtection);
+        }
+        if (s.autolockMinutes !== undefined) {
+          setAutolockMinutes(s.autolockMinutes);
+          window.api.setAutolockMinutes?.(s.autolockMinutes);
+        }
       }
     }).catch(() => {});
   }, []);
+
+  // --- 1b. ACTIVITY TRACKER (Anti-Inattività) ---
+  useEffect(() => {
+    if (isLocked || !window.api) return;
+
+    const pingBackend = () => window.api.pingActivity?.();
+    
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart', 'mousemove'];
+    let lastPing = 0;
+    const throttledPing = () => {
+      const now = Date.now();
+      if (now - lastPing > 30000) { // Ping every 30s max
+        lastPing = now;
+        pingBackend();
+      }
+    };
+
+    events.forEach(e => document.addEventListener(e, throttledPing, { passive: true }));
+    pingBackend(); // Ping immediately on unlock
+
+    return () => {
+      events.forEach(e => document.removeEventListener(e, throttledPing));
+    };
+  }, [isLocked]);
 
   // --- 2. LOGICA NOTIFICHE DI SISTEMA (Monitoraggio Attivo) ---
   useEffect(() => {

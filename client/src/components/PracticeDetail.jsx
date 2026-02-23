@@ -3,7 +3,7 @@ import {
   ArrowLeft, Calendar, FileText, 
   Clock, Plus, X, Trash2, Send, FolderOpen, 
   FolderPlus, Archive, RotateCcw, Lock, ChevronDown,
-  FilePlus, Info, Fingerprint, ShieldCheck
+  FilePlus, Info, Fingerprint, ShieldCheck, Download
 } from 'lucide-react';
 import { exportPracticePDF } from '../utils/pdfGenerator';
 import toast from 'react-hot-toast';
@@ -109,6 +109,21 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
   };
 
   const handleExport = async () => {
+    // Richiedi password prima di esportare il PDF del diario
+    const pwd = prompt("Inserisci la Master Password per esportare il diario:");
+    if (!pwd) return;
+    
+    try {
+      const result = await window.api.verifyVaultPassword(pwd);
+      if (!result || !result.valid) {
+        toast.error('Password errata — esportazione negata');
+        return;
+      }
+    } catch (e) {
+      toast.error('Errore verifica password');
+      return;
+    }
+    
     const success = await exportPracticePDF(practice);
     if (success) toast.success('PDF salvato correttamente');
   };
@@ -272,6 +287,21 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
         {/* ═══ TAB: DIARIO CRONOLOGICO ═══ */}
         {activeTab === 'diary' && (
           <div className="max-w-3xl mx-auto h-full flex flex-col">
+            {/* Header Diario con Export */}
+            {practice.diary && practice.diary.length > 0 && (
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-[10px] font-black text-text-dim uppercase tracking-[2px]">
+                  {practice.diary.length} {practice.diary.length === 1 ? 'annotazione' : 'annotazioni'}
+                </span>
+                <button
+                  onClick={handleExport}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-white/[0.04] text-text-muted border border-white/5 hover:bg-white/[0.08] hover:text-white transition-all"
+                >
+                  <Download size={14} />
+                  Esporta PDF
+                </button>
+              </div>
+            )}
             <div className="flex-1 space-y-6 mb-6">
                {(!practice.diary || practice.diary.length === 0) && (
                 <div className="text-center py-10 text-text-dim">

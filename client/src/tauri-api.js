@@ -68,11 +68,20 @@ window.api = {
   windowMaximize: () => safeInvoke('window_maximize'),
   windowClose: () => safeInvoke('window_close'),
 
+  // Security & Content Protection
+  setContentProtection: (enabled) => safeInvoke('set_content_protection', { enabled }),
+  pingActivity: () => safeInvoke('ping_activity'),
+  setAutolockMinutes: (minutes) => safeInvoke('set_autolock_minutes', { minutes }),
+  getAutolockMinutes: () => safeInvoke('get_autolock_minutes'),
+
   // Listeners — return an unsubscribe function
   onBlur: (cb) => {
     if (!listen) return () => {};
     let unlisten = null;
-    listen('lf-blur', event => cb(event.payload)).then(f => { unlisten = f; }).catch(() => {});
+    listen('lf-blur', event => {
+      // payload is boolean: true = blurred (window lost focus), false = focused
+      cb(event.payload === true || event.payload === undefined);
+    }).then(f => { unlisten = f; }).catch(() => {});
     return () => unlisten?.();
   },
   onLock: (cb) => {

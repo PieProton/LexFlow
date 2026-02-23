@@ -7,7 +7,9 @@ import {
   LogOut,
   RefreshCw,
   Bell,
-  Clock
+  Clock,
+  Camera,
+  Timer
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -20,6 +22,16 @@ const PREAVVISO_OPTIONS = [
   { value: 1440, label: '1 giorno' },
 ];
 
+const AUTOLOCK_OPTIONS = [
+  { value: 1, label: '1 min' },
+  { value: 2, label: '2 min' },
+  { value: 5, label: '5 min' },
+  { value: 10, label: '10 min' },
+  { value: 15, label: '15 min' },
+  { value: 30, label: '30 min' },
+  { value: 0, label: 'Mai' },
+];
+
 export default function SettingsPage({ onLock }) {
   const [privacyEnabled, setPrivacyEnabled] = useState(true);
   const [appVersion, setAppVersion] = useState('');
@@ -29,6 +41,10 @@ export default function SettingsPage({ onLock }) {
   // Stato per le Notifiche
   const [notifyEnabled, setNotifyEnabled] = useState(true);
   const [notificationTime, setNotificationTime] = useState(30);
+
+  // Stato per Sicurezza Avanzata
+  const [screenshotProtection, setScreenshotProtection] = useState(true);
+  const [autolockMinutes, setAutolockMinutes] = useState(5);
 
   useEffect(() => {
     if (window.api) {
@@ -40,6 +56,8 @@ export default function SettingsPage({ onLock }) {
           if (typeof settings.privacyBlurEnabled === 'boolean') setPrivacyEnabled(settings.privacyBlurEnabled);
           if (typeof settings.notifyEnabled === 'boolean') setNotifyEnabled(settings.notifyEnabled);
           if (settings.notificationTime) setNotificationTime(settings.notificationTime);
+          if (typeof settings.screenshotProtection === 'boolean') setScreenshotProtection(settings.screenshotProtection);
+          if (settings.autolockMinutes !== undefined) setAutolockMinutes(settings.autolockMinutes);
         }
       });
     }
@@ -189,6 +207,73 @@ export default function SettingsPage({ onLock }) {
             >
               <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform duration-200 ${privacyEnabled ? 'left-7' : 'left-1'}`} />
             </button>
+          </div>
+
+          {/* Anti-Screenshot */}
+          <div className="flex items-center justify-between group pt-4 border-t border-white/5">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Camera size={16} className="text-red-400" />
+                <span className="font-medium text-white">Blocco Screenshot</span>
+                <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded border border-red-500/20">SICUREZZA</span>
+              </div>
+              <p className="text-xs text-text-muted max-w-md">
+                Impedisce la cattura dello schermo (screenshot, registrazioni, condivisione schermo).
+              </p>
+            </div>
+            <button 
+              onClick={async () => {
+                const val = !screenshotProtection;
+                setScreenshotProtection(val);
+                try {
+                  await window.api.setContentProtection(val);
+                  await window.api.saveSettings({ screenshotProtection: val });
+                  toast.success(val ? 'Blocco Screenshot Attivato' : 'Blocco Screenshot Disattivato');
+                } catch (e) {
+                  toast.error('Errore');
+                  setScreenshotProtection(!val);
+                }
+              }}
+              className={`w-12 h-6 rounded-full transition-colors relative ${screenshotProtection ? 'bg-red-500' : 'bg-white/10'}`}
+            >
+              <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform duration-200 ${screenshotProtection ? 'left-7' : 'left-1'}`} />
+            </button>
+          </div>
+
+          {/* Auto-Lock Timer */}
+          <div className="pt-4 border-t border-white/5">
+            <div className="flex items-center gap-2 mb-1">
+              <Timer size={16} className="text-primary" />
+              <span className="font-medium text-white">Blocco Automatico</span>
+            </div>
+            <p className="text-xs text-text-muted max-w-md mb-4">
+              Blocca automaticamente il Vault dopo un periodo di inattività.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {AUTOLOCK_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={async () => {
+                    setAutolockMinutes(opt.value);
+                    try {
+                      await window.api.setAutolockMinutes(opt.value);
+                      await window.api.saveSettings({ autolockMinutes: opt.value });
+                      toast.success(opt.value === 0 ? 'Blocco automatico disabilitato' : `Blocco dopo ${opt.label} di inattività`);
+                    } catch (e) {
+                      toast.error('Errore');
+                    }
+                  }}
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all border ${
+                    autolockMinutes === opt.value
+                      ? 'bg-primary text-black border-primary shadow-[0_0_12px_rgba(212,169,64,0.3)]'
+                      : 'bg-white/[0.04] text-text-muted border-white/5 hover:bg-white/[0.08] hover:text-white'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">

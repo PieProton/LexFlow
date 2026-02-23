@@ -6,7 +6,7 @@ use zeroize::{Zeroize, Zeroizing};
 // Security & Crypto Hardened
 use aes_gcm::{Aes256Gcm, Key, Nonce, aead::{Aead, KeyInit}};
 use argon2::{Argon2, Params, Version, Algorithm};
-use sha2::Sha256;
+use sha2::{Sha256, Digest};
 use hmac::{Hmac, Mac};
 
 // ═══════════════════════════════════════════════════════════
@@ -35,7 +35,25 @@ const ARGON2_P_COST: u32 = 2;
 const MAX_FAILED_ATTEMPTS: u32 = 5;
 const LOCKOUT_SECS: u64 = 300; 
 
-const LICENSE_SECRET: &str = "LexFlow-Master-2026-PietroLongo-DO_NOT_SHARE";
+// LICENSE_SECRET derivato da fingerprint hardware — MAI hardcoded
+// Genera una chiave unica per macchina basata su username + hostname + costante app
+fn get_license_secret() -> String {
+    let user = whoami::username();
+    let host = whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string());
+    let seed = format!("LEXFLOW-LICENSE-SEED:{}:{}:2026", user, host);
+    let hash = <Sha256 as Digest>::digest(seed.as_bytes());
+    hex::encode(hash)
+}
+
+// Chiave di cifratura per dati locali non-vault (notifiche, settings, license)
+// Derivata dalla macchina, non dalla password utente — inaccessibile da remoto
+fn get_local_encryption_key() -> Vec<u8> {
+    let user = whoami::username();
+    let host = whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string());
+    let seed = format!("LEXFLOW-LOCAL-KEY:{}:{}:FORTKNOX", user, host);
+    let hash = <Sha256 as Digest>::digest(seed.as_bytes());
+    hash.to_vec()
+}
 
 // ═══════════════════════════════════════════════════════════
 //  STATE & MEMORY PROTECTION
@@ -51,6 +69,8 @@ pub struct AppState {
     vault_key: Mutex<Option<SecureKey>>,
     failed_attempts: Mutex<u32>,
     locked_until: Mutex<Option<Instant>>,
+    last_activity: Mutex<Instant>,
+    autolock_minutes: Mutex<u32>,
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -170,6 +190,7 @@ fn unlock_vault(state: State<AppState>, password: String) -> Value {
             }
             *state.vault_key.lock().unwrap() = Some(SecureKey(k));
             *state.failed_attempts.lock().unwrap() = 0;
+            *state.last_activity.lock().unwrap() = Instant::now();
             let _ = append_audit_log(&state, "Sblocco Vault");
             json!({"success": true, "isNew": is_new})
         },
@@ -318,11 +339,25 @@ fn save_bio(pwd: String) -> Result<bool, String> {
 fn bio_login() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        let swift = "import LocalAuthentication\nlet ctx = LAContext()\nvar err: NSError?\nif ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &err) {\n  let sema = DispatchSemaphore(value: 0)\n  var ok = false\n  ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: \"LexFlow\") { s, _ in ok = s; sema.signal() }\n  sema.wait()\n  if ok { exit(0) } else { exit(1) }\n} else { exit(1) }";
-        let tmp = std::env::temp_dir().join("bio_auth.swift");
-        fs::write(&tmp, swift).unwrap();
-        let status = std::process::Command::new("swift").arg(&tmp).status().map_err(|e| e.to_string())?;
-        let _ = fs::remove_file(&tmp);
+        // FORT KNOX: Swift code passed via stdin — NEVER written to disk
+        let swift_code = "import LocalAuthentication\nlet ctx = LAContext()\nvar err: NSError?\nif ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &err) {\n  let sema = DispatchSemaphore(value: 0)\n  var ok = false\n  ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: \"LexFlow\") { s, _ in ok = s; sema.signal() }\n  sema.wait()\n  if ok { exit(0) } else { exit(1) }\n} else { exit(1) }";
+        
+        use std::io::Write;
+        let mut child = std::process::Command::new("swift")
+            .arg("-")  // Read from stdin
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        
+        if let Some(ref mut stdin) = child.stdin {
+            stdin.write_all(swift_code.as_bytes()).map_err(|e| e.to_string())?;
+        }
+        // Drop stdin to signal EOF
+        drop(child.stdin.take());
+        
+        let status = child.wait().map_err(|e| e.to_string())?;
         if !status.success() { return Err("Fallito".into()); }
     }
     let user = whoami::username();
@@ -371,36 +406,75 @@ fn get_audit_log(state: State<AppState>) -> Result<Value, String> {
 #[tauri::command]
 fn get_settings(state: State<AppState>) -> Value {
     let path = state.data_dir.lock().unwrap().join(SETTINGS_FILE);
-    fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(json!({}))
+    if !path.exists() { return json!({}); }
+    let key = get_local_encryption_key();
+    if let Ok(enc) = fs::read(&path) {
+        // Try encrypted format first
+        if let Ok(dec) = decrypt_data(&key, &enc) {
+            return serde_json::from_slice(&dec).unwrap_or(json!({}));
+        }
+        // Migration: old plaintext format
+        if let Ok(text) = std::str::from_utf8(&enc) {
+            if let Ok(val) = serde_json::from_str::<Value>(text) {
+                // Re-encrypt and save
+                if let Ok(re_enc) = encrypt_data(&key, &serde_json::to_vec(&val).unwrap_or_default()) {
+                    let _ = fs::write(&path, re_enc);
+                }
+                return val;
+            }
+        }
+    }
+    json!({})
 }
 
 #[tauri::command]
 fn save_settings(state: State<AppState>, settings: Value) -> bool {
     let path = state.data_dir.lock().unwrap().join(SETTINGS_FILE);
-    fs::write(path, serde_json::to_string_pretty(&settings).unwrap()).is_ok()
+    let key = get_local_encryption_key();
+    match encrypt_data(&key, &serde_json::to_vec(&settings).unwrap_or_default()) {
+        Ok(encrypted) => fs::write(path, encrypted).is_ok(),
+        Err(_) => false,
+    }
 }
 
 #[tauri::command]
 fn check_license(state: State<AppState>) -> Value {
     let path = state.data_dir.lock().unwrap().join(LICENSE_FILE);
-    if let Ok(s) = fs::read_to_string(path) {
-        if let Ok(data) = serde_json::from_str::<Value>(&s) {
-            let key = data.get("key").and_then(|k| k.as_str()).unwrap_or("");
-            if !key.is_empty() && verify_license_key(key) {
-                return json!({
-                    "activated": true,
-                    "key": key,
-                    "activatedAt": data.get("activatedAt").cloned().unwrap_or(Value::Null),
-                    "client": data.get("client").cloned().unwrap_or(Value::Null),
-                });
-            }
+    if !path.exists() { return json!({"activated": false}); }
+    let key = get_local_encryption_key();
+    let data: Value = if let Ok(enc) = fs::read(&path) {
+        // Try encrypted format
+        if let Ok(dec) = decrypt_data(&key, &enc) {
+            serde_json::from_slice(&dec).unwrap_or(json!({}))
+        } else {
+            // Migration from plaintext
+            if let Ok(text) = std::str::from_utf8(&enc) {
+                if let Ok(val) = serde_json::from_str::<Value>(text) {
+                    if let Ok(re_enc) = encrypt_data(&key, &serde_json::to_vec(&val).unwrap_or_default()) {
+                        let _ = fs::write(&path, re_enc);
+                    }
+                    val
+                } else { return json!({"activated": false}); }
+            } else { return json!({"activated": false}); }
         }
+    } else { return json!({"activated": false}); };
+    
+    let license_key = data.get("key").and_then(|k| k.as_str()).unwrap_or("");
+    if !license_key.is_empty() && verify_license_key(license_key) {
+        json!({
+            "activated": true,
+            "key": license_key,
+            "activatedAt": data.get("activatedAt").cloned().unwrap_or(Value::Null),
+            "client": data.get("client").cloned().unwrap_or(Value::Null),
+        })
+    } else {
+        json!({"activated": false})
     }
-    json!({"activated": false})
 }
 
 fn hmac_checksum(payload: &str) -> String {
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(LICENSE_SECRET.as_bytes()).expect("HMAC init");
+    let secret = get_license_secret();
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret.as_bytes()).expect("HMAC init");
     mac.update(payload.as_bytes());
     let result = mac.finalize().into_bytes();
     format!("{:02X}{:02X}", result[0], result[1]).chars().take(4).collect::<String>()
@@ -416,16 +490,35 @@ fn verify_license_key(key: &str) -> bool {
 
 #[tauri::command]
 fn activate_license(state: State<AppState>, key: String) -> Value {
+    // Anti brute-force: usa lo stesso lockout del vault
+    if let Some(until) = *state.locked_until.lock().unwrap() {
+        if Instant::now() < until {
+            return json!({"success": false, "locked": true, "remaining": (until - Instant::now()).as_secs()});
+        }
+    }
+    
     let key = key.trim().to_uppercase();
     if !verify_license_key(&key) {
+        let mut att = state.failed_attempts.lock().unwrap();
+        *att += 1;
+        if *att >= MAX_FAILED_ATTEMPTS {
+            *state.locked_until.lock().unwrap() = Some(Instant::now() + Duration::from_secs(LOCKOUT_SECS));
+        }
         return json!({"success": false, "error": "Chiave non valida. Controlla di averla inserita correttamente."});
     }
+    *state.failed_attempts.lock().unwrap() = 0;
     let path = state.data_dir.lock().unwrap().join(LICENSE_FILE);
     let now = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let record = json!({"key": key, "activatedAt": now, "client": "Utente"});
-    match fs::write(&path, serde_json::to_string_pretty(&record).unwrap_or_default()) {
-        Ok(_) => json!({"success": true, "key": key}),
-        Err(e) => json!({"success": false, "error": format!("Errore: {}", e)}),
+    let enc_key = get_local_encryption_key();
+    match encrypt_data(&enc_key, &serde_json::to_vec(&record).unwrap_or_default()) {
+        Ok(encrypted) => {
+            match fs::write(&path, encrypted) {
+                Ok(_) => json!({"success": true, "key": key}),
+                Err(e) => json!({"success": false, "error": format!("Errore: {}", e)}),
+            }
+        },
+        Err(e) => json!({"success": false, "error": format!("Errore cifratura: {}", e)}),
     }
 }
 
@@ -522,13 +615,43 @@ fn send_notification(app: AppHandle, title: String, body: String) {
 #[tauri::command]
 fn sync_notification_schedule(state: State<AppState>, schedule: Value) -> bool {
     let dir = state.data_dir.lock().unwrap().clone();
-    fs::write(dir.join(NOTIF_SCHEDULE_FILE), serde_json::to_string_pretty(&schedule).unwrap_or_default()).is_ok()
+    let key = get_local_encryption_key();
+    let plaintext = serde_json::to_vec(&schedule).unwrap_or_default();
+    match encrypt_data(&key, &plaintext) {
+        Ok(encrypted) => fs::write(dir.join(NOTIF_SCHEDULE_FILE), encrypted).is_ok(),
+        Err(_) => false,
+    }
 }
 
-/// Background notification engine — reads schedule file, no vault access needed
+/// Decrypt notification schedule with local machine key
+fn read_notification_schedule(data_dir: &PathBuf) -> Option<Value> {
+    let path = data_dir.join(NOTIF_SCHEDULE_FILE);
+    if !path.exists() { return None; }
+    let key = get_local_encryption_key();
+    let encrypted = fs::read(&path).ok()?;
+    // Try encrypted format first, fall back to plaintext for migration
+    if let Ok(decrypted) = decrypt_data(&key, &encrypted) {
+        serde_json::from_slice(&decrypted).ok()
+    } else {
+        // Migration: old plaintext format → re-encrypt
+        if let Ok(text) = std::str::from_utf8(&encrypted) {
+            if let Ok(val) = serde_json::from_str::<Value>(text) {
+                // Re-encrypt and save
+                if let Ok(enc) = encrypt_data(&key, &serde_json::to_vec(&val).unwrap_or_default()) {
+                    let _ = fs::write(&path, enc);
+                }
+                return Some(val);
+            }
+        }
+        None
+    }
+}
+
+/// Background notification engine — reads encrypted schedule, no vault access needed
 fn start_notification_scheduler(app: AppHandle, data_dir: PathBuf) {
     std::thread::spawn(move || {
         let mut last_minute = String::new();
+        let local_key = get_local_encryption_key();
         loop {
             std::thread::sleep(Duration::from_secs(60));
             let now = chrono::Local::now();
@@ -537,20 +660,25 @@ fn start_notification_scheduler(app: AppHandle, data_dir: PathBuf) {
             last_minute = current_minute.clone();
             let today = now.format("%Y-%m-%d").to_string();
             let tomorrow = (now + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
-            // Read schedule (non-encrypted)
-            let schedule_path = data_dir.join(NOTIF_SCHEDULE_FILE);
-            let schedule: Value = if schedule_path.exists() {
-                match fs::read_to_string(&schedule_path) {
-                    Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
-                    Err(_) => continue,
-                }
-            } else { continue };
-            // Read sent log
+            // Read encrypted schedule
+            let schedule: Value = match read_notification_schedule(&data_dir) {
+                Some(v) => v,
+                None => continue,
+            };
+            // Read encrypted sent log
             let sent_path = data_dir.join(NOTIF_SENT_FILE);
             let mut sent: Vec<String> = if sent_path.exists() {
-                fs::read_to_string(&sent_path).ok()
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default()
+                if let Ok(enc) = fs::read(&sent_path) {
+                    // Try encrypted first
+                    if let Ok(dec) = decrypt_data(&local_key, &enc) {
+                        serde_json::from_slice(&dec).unwrap_or_default()
+                    } else {
+                        // Migration from plaintext
+                        fs::read_to_string(&sent_path).ok()
+                            .and_then(|s| serde_json::from_str(&s).ok())
+                            .unwrap_or_default()
+                    }
+                } else { vec![] }
             } else { vec![] };
             let briefing_times = schedule.get("briefingTimes")
                 .and_then(|v| v.as_array()).cloned().unwrap_or_default();
@@ -605,18 +733,49 @@ fn start_notification_scheduler(app: AppHandle, data_dir: PathBuf) {
                     }
                 }
             }
-            // Persist sent log (keep last 500)
+            // Persist encrypted sent log (keep last 500)
             if new_sent {
                 if sent.len() > 500 { sent.drain(..sent.len() - 500); }
-                let _ = fs::write(&sent_path, serde_json::to_string(&sent).unwrap_or_default());
+                if let Ok(enc) = encrypt_data(&local_key, &serde_json::to_vec(&sent).unwrap_or_default()) {
+                    let _ = fs::write(&sent_path, enc);
+                }
             }
             // Daily cleanup at midnight
             if current_minute == "00:00" {
                 sent.retain(|s| s.contains(&today) || s.contains(&tomorrow));
-                let _ = fs::write(&sent_path, serde_json::to_string(&sent).unwrap_or_default());
+                if let Ok(enc) = encrypt_data(&local_key, &serde_json::to_vec(&sent).unwrap_or_default()) {
+                    let _ = fs::write(&sent_path, enc);
+                }
             }
         }
     });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  ANTI-SCREENSHOT & CONTENT PROTECTION
+// ═══════════════════════════════════════════════════════════
+
+#[tauri::command]
+fn set_content_protection(app: AppHandle, enabled: bool) -> bool {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.set_content_protected(enabled);
+        true
+    } else { false }
+}
+
+#[tauri::command]
+fn ping_activity(state: State<AppState>) {
+    *state.last_activity.lock().unwrap() = Instant::now();
+}
+
+#[tauri::command]
+fn set_autolock_minutes(state: State<AppState>, minutes: u32) {
+    *state.autolock_minutes.lock().unwrap() = minutes;
+}
+
+#[tauri::command]
+fn get_autolock_minutes(state: State<AppState>) -> u32 {
+    *state.autolock_minutes.lock().unwrap()
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -666,10 +825,41 @@ pub fn run() {
             vault_key: Mutex::new(None),
             failed_attempts: Mutex::new(0),
             locked_until: Mutex::new(None),
+            last_activity: Mutex::new(Instant::now()),
+            autolock_minutes: Mutex::new(5),
         })
         .setup(move |app| {
             // Start notification scheduler
             start_notification_scheduler(app.handle().clone(), data_dir_for_scheduler.clone());
+
+            // Anti-Screenshot: enable content protection by default
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_content_protected(true);
+            }
+
+            // Auto-lock thread: checks inactivity every 30 seconds
+            let autolock_handle = app.handle().clone();
+            let _state_ref = app.state::<AppState>();
+            let ah = autolock_handle.clone();
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(Duration::from_secs(30));
+                    let state = ah.state::<AppState>();
+                    // Only auto-lock if vault is currently unlocked
+                    let is_unlocked = state.vault_key.lock().unwrap().is_some();
+                    if !is_unlocked { continue; }
+                    
+                    let minutes = *state.autolock_minutes.lock().unwrap();
+                    if minutes == 0 { continue; } // 0 = disabled
+                    let last = *state.last_activity.lock().unwrap();
+                    let elapsed = Instant::now().duration_since(last);
+                    if elapsed >= Duration::from_secs(minutes as u64 * 60) {
+                        // Auto-lock: wipe vault key and notify frontend
+                        *state.vault_key.lock().unwrap() = None;
+                        let _ = ah.emit("lf-vault-locked", ());
+                    }
+                }
+            });
 
             // Show main window after setup
             if let Some(w) = app.get_webview_window("main") {
@@ -677,12 +867,15 @@ pub fn run() {
                 let _ = w.set_focus();
             }
 
-            // Window blur event → emit to frontend
+            // Window focus/blur events → emit to frontend for privacy shield
             let app_handle = app.handle().clone();
             if let Some(w) = app.get_webview_window("main") {
                 w.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Focused(false) = event {
-                        let _ = app_handle.emit("lf-blur", ());
+                    match event {
+                        tauri::WindowEvent::Focused(focused) => {
+                            let _ = app_handle.emit("lf-blur", !focused);
+                        },
+                        _ => {}
                     }
                 });
             }
@@ -728,6 +921,11 @@ pub fn run() {
             // Platform
             is_mac,
             get_app_version,
+            // Security & Content Protection
+            set_content_protection,
+            ping_activity,
+            set_autolock_minutes,
+            get_autolock_minutes,
             // Window
             window_minimize,
             window_maximize,
