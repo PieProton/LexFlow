@@ -8,3 +8,7 @@ rustflags = [
 rustflags = [
     "-C", "link-arg=-fuse-ld=/opt/homebrew/bin/ld64.lld"
 ]
+
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"
+rustflags = ["-C", "linker-flavor=msvc"]
