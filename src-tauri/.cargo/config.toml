@@ -1,0 +1,10 @@
+# Forza Rust a usare lld (il linker ultraveloce) invece di quello di base del Mac
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-fuse-ld=/opt/homebrew/bin/ld64.lld"
+]
+
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-fuse-ld=/opt/homebrew/bin/ld64.lld"
+]

@@ -7,8 +7,7 @@ import {
   Archive,
   CheckCircle2,
   Filter,
-  Fingerprint,
-  Lock
+  Fingerprint
 } from 'lucide-react';
 
 // Mappa dei colori e stili per ogni materia
@@ -223,7 +222,7 @@ export default function PracticesList({ practices = [], onSelect, onNewPractice 
                 </div>
                 
                 <div className="flex items-center gap-4">
-                   <Lock size={14} className="text-text-dim/40" title="Protetto con biometria" />
+                   {p?.biometricProtected && <Fingerprint size={16} className="text-primary/60" title="Protetto con biometria" />}
                    <ChevronRight className="text-text-dim group-hover:text-primary group-hover:translate-x-1 transition-all" size={24} />
                 </div>
               </div>

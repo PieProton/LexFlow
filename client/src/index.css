@@ -263,14 +263,118 @@
   }
 }
 
-/* ========== ANIMATIONS ========== */
+/* ========== ANIMATIONS — TechnoJaw Style ========== */
+
+/* ── Timing Variables ── */
+:root {
+  --timing-fast: 150ms;
+  --timing-base: 300ms;
+  --timing-slow: 500ms;
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
 @keyframes slideUp { from { transform: translateY(12px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+
+@keyframes cascadeIn {
+  from { opacity: 0; transform: translateY(-40px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(10px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes pulse-smooth {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
 
 @layer components {
   .animate-slide-up { animation: slideUp 0.4s ease-out; }
   .animate-shake { animation: shake 0.4s; }
+
+  .animate-cascade-in {
+    opacity: 0;
+    animation: cascadeIn 0.6s var(--ease-out-expo) forwards;
+  }
+
+  .animate-fade-in-up {
+    opacity: 0;
+    animation: fadeInUp 0.5s var(--ease-out-expo) forwards;
+  }
+
+  .animate-fade-in-down {
+    opacity: 0;
+    animation: fadeInDown 0.5s var(--ease-out-expo) forwards;
+  }
+
+  .animate-count-up {
+    opacity: 0;
+    animation: countUp 0.4s var(--ease-out-expo) forwards;
+  }
+
+  .animate-pulse-smooth {
+    animation: pulse-smooth 2s var(--ease-smooth) infinite;
+  }
+
+  .animate-shimmer {
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.04) 50%, transparent 100%);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+  }
 }
+
+/* ── Stagger Delays ── */
+.stagger-1 { animation-delay: 0ms; }
+.stagger-2 { animation-delay: 100ms; }
+.stagger-3 { animation-delay: 200ms; }
+.stagger-4 { animation-delay: 300ms; }
+.stagger-5 { animation-delay: 400ms; }
+.stagger-6 { animation-delay: 500ms; }
+.stagger-7 { animation-delay: 600ms; }
+.stagger-8 { animation-delay: 700ms; }
+
+/* ── GPU Optimized ── */
+.animate-gpu {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* ── Page Cascade ── */
+.page-cascade > * {
+  opacity: 0;
+  animation: fadeInUp 0.5s var(--ease-out-expo) forwards;
+}
+.page-cascade > *:nth-child(1) { animation-delay: 0ms; }
+.page-cascade > *:nth-child(2) { animation-delay: 80ms; }
+.page-cascade > *:nth-child(3) { animation-delay: 160ms; }
+.page-cascade > *:nth-child(4) { animation-delay: 240ms; }
+.page-cascade > *:nth-child(5) { animation-delay: 320ms; }
+.page-cascade > *:nth-child(6) { animation-delay: 400ms; }
+.page-cascade > *:nth-child(7) { animation-delay: 480ms; }
+.page-cascade > *:nth-child(8) { animation-delay: 560ms; }
+.page-cascade > *:nth-child(9) { animation-delay: 640ms; }
+.page-cascade > *:nth-child(10) { animation-delay: 720ms; }
 
 @keyframes shake {
   0%, 100% { transform: translateX(0); }

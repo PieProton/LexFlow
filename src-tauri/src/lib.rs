@@ -552,7 +552,7 @@ fn activate_license(state: State<AppState>, key: String) -> Value {
 // ═══════════════════════════════════════════════════════════
 
 #[tauri::command]
-fn export_vault(state: State<AppState>, pwd: String, app: AppHandle) -> Result<Value, String> {
+async fn export_vault(state: State<'_, AppState>, pwd: String, app: AppHandle) -> Result<Value, String> {
     use tauri_plugin_dialog::DialogExt;
     let data = read_vault_internal(&state)?;
     let salt = (0..32).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
@@ -560,7 +560,11 @@ fn export_vault(state: State<AppState>, pwd: String, app: AppHandle) -> Result<V
     let encrypted = encrypt_data(&key, &serde_json::to_vec(&data).unwrap())?;
     let mut out = salt; out.extend(encrypted);
 
-    let path = app.dialog().file().set_file_name("LexFlow_Backup.lex").blocking_save_file();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().set_file_name("LexFlow_Backup.lex").save_file(move |file_path| {
+        let _ = tx.send(file_path);
+    });
+    let path = rx.await.map_err(|e| format!("Dialog error: {}", e))?;
     if let Some(p) = path {
         fs::write(p.into_path().unwrap(), out).map_err(|e| e.to_string())?;
         Ok(json!({"success": true}))
@@ -568,9 +572,13 @@ fn export_vault(state: State<AppState>, pwd: String, app: AppHandle) -> Result<V
 }
 
 #[tauri::command]
-fn import_vault(state: State<AppState>, pwd: String, app: AppHandle) -> Result<Value, String> {
+async fn import_vault(state: State<'_, AppState>, pwd: String, app: AppHandle) -> Result<Value, String> {
     use tauri_plugin_dialog::DialogExt;
-    let path = app.dialog().file().blocking_pick_file();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().pick_file(move |file_path| {
+        let _ = tx.send(file_path);
+    });
+    let path = rx.await.map_err(|e| format!("Dialog error: {}", e))?;
     if let Some(p) = path {
         let raw = fs::read(p.into_path().unwrap()).map_err(|e| e.to_string())?;
         let salt = &raw[..32];
@@ -591,10 +599,23 @@ fn import_vault(state: State<AppState>, pwd: String, app: AppHandle) -> Result<V
 fn open_path(path: String) { let _ = open::that(path); }
 
 #[tauri::command]
-fn select_file(app: AppHandle) -> Result<Option<Value>, String> {
+async fn select_file(app: AppHandle) -> Result<Option<Value>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let file = app.dialog().file().add_filter("Documenti", &["pdf","docx","doc"]).blocking_pick_file();
-    Ok(file.map(|f| json!({"name": f.clone().into_path().unwrap().file_name().unwrap().to_string_lossy(), "path": f.into_path().unwrap().to_string_lossy()})))
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("Documenti", &["pdf", "docx", "doc"])
+        .pick_file(move |file_path| {
+            let _ = tx.send(file_path);
+        });
+    let file = rx.await.map_err(|e| format!("Dialog error: {}", e))?;
+    Ok(file.map(|f| {
+        let path = f.clone().into_path().unwrap();
+        let name = path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "file".to_string());
+        json!({"name": name, "path": path.to_string_lossy()})
+    }))
 }
 
 #[tauri::command]
@@ -610,13 +631,17 @@ fn get_app_version(app: AppHandle) -> String { app.package_info().version.to_str
 fn is_mac() -> bool { cfg!(target_os = "macos") }
 
 #[tauri::command]
-fn export_pdf(app: AppHandle, data: Vec<u8>, default_name: String) -> Result<Value, String> {
+async fn export_pdf(app: AppHandle, data: Vec<u8>, default_name: String) -> Result<Value, String> {
     use tauri_plugin_dialog::DialogExt;
-    let file_path = app.dialog()
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
         .file()
         .add_filter("PDF", &["pdf"])
         .set_file_name(&default_name)
-        .blocking_save_file();
+        .save_file(move |file_path| {
+            let _ = tx.send(file_path);
+        });
+    let file_path = rx.await.map_err(|e| format!("Dialog error: {}", e))?;
     match file_path {
         Some(fp) => {
             let path = fp.into_path().map_err(|e| format!("Path error: {:?}", e))?;

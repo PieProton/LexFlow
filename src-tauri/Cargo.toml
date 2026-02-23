@@ -37,6 +37,7 @@ rand = "0.8"
 uuid = { version = "1", features = ["v4"] }
 hex = "0.4"
 image = { version = "0.25", default-features = false, features = ["png"] }
+tokio = { version = "1", features = ["sync"] }
 
 # Security (MIL-GRADE)
 aes-gcm = "0.10"
@@ -46,3 +47,10 @@ hmac = "0.12"
 base64 = "0.22"
 zeroize = { version = "1.7", features = ["derive", "alloc"] }
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+strip = true

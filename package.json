@@ -1,6 +1,6 @@
 {
   "name": "lexflow",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "LexFlow — Gestionale Studio Legale con Crittografia Zero-Knowledge",
   "author": "TechnoJaw",
   "private": true,
@@ -17,7 +17,8 @@
     "deploy:desktop": "echo \"Implement deploy:desktop workflow (see BUILD_MASTER.md)\"",
     "deploy:releases": "echo \"Implement deploy:releases workflow (see BUILD_MASTER.md)\"",
     "install": "npm run build && npm run deploy:desktop",
-    "icons": "python3 scripts/generate-icons.py"
+    "icons": "python3 scripts/generate-icons.py",
+    "keygen": "node scripts/license-keygen.js"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.0",
