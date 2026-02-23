@@ -35,7 +35,7 @@ jobs:
           workspaces: src-tauri
 
       - name: Install frontend deps
-        run: cd client && npm ci
+        run: cd client && npm ci --legacy-peer-deps
 
       - name: Build Windows
         run: npx @tauri-apps/cli build --target x86_64-pc-windows-msvc --bundles nsis,msi
