@@ -35,17 +35,9 @@ const ARGON2_P_COST: u32 = 2;
 const MAX_FAILED_ATTEMPTS: u32 = 5;
 const LOCKOUT_SECS: u64 = 300; 
 
-// LICENSE_SECRET derivato da fingerprint hardware — MAI hardcoded
-// Genera una chiave unica per macchina basata su username + hostname + costante app
-fn get_license_secret() -> String {
-    let user = whoami::username();
-    let host = whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string());
-    let seed = format!("LEXFLOW-LICENSE-SEED:{}:{}:2026", user, host);
-    let hash = <Sha256 as Digest>::digest(seed.as_bytes());
-    hex::encode(hash)
-}
-
-// Chiave di cifratura per dati locali non-vault (notifiche, settings, license)
+// ═══════════════════════════════════════════════════════════
+//  STATE & MEMORY PROTECTION
+// ═══════════════════════════════════════════════════════════
 // Derivata dalla macchina, non dalla password utente — inaccessibile da remoto
 fn get_local_encryption_key() -> Vec<u8> {
     let user = whoami::username();
@@ -472,20 +464,32 @@ fn check_license(state: State<AppState>) -> Value {
     }
 }
 
+// MASTER_SECRET deve essere identico alla costante nel keygen JS.
+// NON usare get_license_secret() qui — quella è machine-specific e renderebbe
+// le chiavi generate dallo sviluppatore non verificabili sul PC del cliente.
+const LICENSE_MASTER_SECRET: &str = "LexFlow-Master-2026-PietroLongo-DO_NOT_SHARE";
+
 fn hmac_checksum(payload: &str) -> String {
-    let secret = get_license_secret();
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret.as_bytes()).expect("HMAC init");
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(LICENSE_MASTER_SECRET.as_bytes())
+        .expect("HMAC init");
     mac.update(payload.as_bytes());
     let result = mac.finalize().into_bytes();
+    // 4 caratteri HEX maiuscolo (stessa logica del keygen JS)
     format!("{:02X}{:02X}", result[0], result[1]).chars().take(4).collect::<String>()
 }
 
 fn verify_license_key(key: &str) -> bool {
     let parts: Vec<&str> = key.split('-').collect();
     if parts.len() != 5 || parts[0] != "LXFW" { return false; }
-    let payload = format!("{}{}{}", parts[1], parts[2], parts[3]);
+    let s2 = parts[1];
+    let s3 = parts[2];
+    let s4 = parts[3];
+    let checksum = parts[4];
+    // Ogni segmento deve essere 4 caratteri hex validi
+    if s2.len() != 4 || s3.len() != 4 || s4.len() != 4 || checksum.len() != 4 { return false; }
+    let payload = format!("{}{}{}", s2, s3, s4);
     if hex::decode(&payload).is_err() { return false; }
-    hmac_checksum(&payload) == parts[4]
+    hmac_checksum(&payload) == checksum
 }
 
 #[tauri::command]

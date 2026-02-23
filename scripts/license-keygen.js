@@ -44,22 +44,26 @@ function hmac(data) {
 
 /**
  * Genera una chiave nel formato LXFW-XXXX-XXXX-XXXX-XXXX
- * L'ultimo segmento è un checksum HMAC — non falsificabile senza MASTER_SECRET.
+ * I segmenti S2/S3/S4 sono 6 byte random → 12 hex → 100% unici ad ogni chiamata.
+ * L'ultimo segmento è un checksum HMAC-SHA256(MASTER_SECRET, S2+S3+S4) — non
+ * falsificabile senza MASTER_SECRET, e verificabile offline da Rust con lo stesso
+ * segreto condiviso compilato nel binario.
  */
 function generateKey({ client = 'Utente', expires = null } = {}) {
   const id      = crypto.randomBytes(4).toString('hex').toUpperCase();
   const created = new Date().toISOString().slice(0, 10);
-  const payload = JSON.stringify({ v: 1, id, client, expires, created });
 
-  const payloadHex = Buffer.from(payload).toString('hex').toUpperCase();
-  const short = payloadHex.substring(0, 12).padEnd(12, '0');
-  const s2 = short.substring(0, 4);
-  const s3 = short.substring(4, 8);
-  const s4 = short.substring(8, 12);
-  // Il checksum è calcolato su s2+s3+s4 (proxy del payload, verificabile offline da Rust)
+  // 6 byte random → 12 caratteri hex HEX (es. "A3F1-9C2B-04E7")
+  const randomHex = crypto.randomBytes(6).toString('hex').toUpperCase();
+  const s2 = randomHex.substring(0, 4);
+  const s3 = randomHex.substring(4, 8);
+  const s4 = randomHex.substring(8, 12);
+
+  // Checksum HMAC-SHA256 calcolato su S2+S3+S4 con MASTER_SECRET
   const checksum = hmac(s2 + s3 + s4).substring(0, 4);
 
-  const key = `LXFW-${s2}-${s3}-${s4}-${checksum}`;
+  const key     = `LXFW-${s2}-${s3}-${s4}-${checksum}`;
+  const payload = JSON.stringify({ v: 1, id, client, expires, created, s2, s3, s4 });
   return { key, client, expires: expires || 'perpetua', created, id, payload };
 }
 

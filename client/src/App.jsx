@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 
 // Componenti
 import LoginScreen from './components/LoginScreen';
+import LicenseScreen from './components/LicenseScreen';
 import Sidebar from './components/Sidebar';
 import WindowControls from './components/WindowControls';
 import PracticeDetail from './components/PracticeDetail';
@@ -24,6 +25,8 @@ export default function App() {
   const location = useLocation();
   
   // --- STATI GLOBALI DI SICUREZZA ---
+  const [licenseChecked, setLicenseChecked] = useState(false);   // true = licenza verificata
+  const [licenseActivated, setLicenseActivated] = useState(false); // true = licenza valida
   const [isLocked, setIsLocked] = useState(true);
   const [blurred, setBlurred] = useState(false);
   const [privacyEnabled, setPrivacyEnabled] = useState(true);
@@ -42,6 +45,15 @@ export default function App() {
   // --- 1. INIZIALIZZAZIONE ---
   useEffect(() => {
     if (!window.api) return;
+
+    // Controlla prima la licenza, poi carica le impostazioni
+    window.api.checkLicense?.().then(lic => {
+      setLicenseChecked(true);
+      setLicenseActivated(lic?.activated === true);
+    }).catch(() => {
+      setLicenseChecked(true);
+      setLicenseActivated(false);
+    });
 
     window.api.getAppVersion?.().then(v => setVersion(v || '')).catch(() => {});
     
@@ -249,6 +261,25 @@ export default function App() {
   };
 
   // --- 5. RENDER ---
+
+  // Gate 1: Licenza — blocca tutto finché non verificata/attivata
+  if (!licenseChecked) {
+    return (
+      <div className="h-screen w-screen overflow-hidden bg-background flex items-center justify-center">
+        <div className="animate-pulse text-text-muted text-xs tracking-widest uppercase">Verifico licenza…</div>
+      </div>
+    );
+  }
+  if (!licenseActivated) {
+    return (
+      <div className="h-screen w-screen overflow-hidden bg-background">
+        <WindowControls />
+        <LicenseScreen onActivated={() => setLicenseActivated(true)} />
+      </div>
+    );
+  }
+
+  // Gate 2: Vault — richiede password (o biometria)
   if (isLocked) {
     return (
       <div className="h-screen w-screen overflow-hidden bg-background">
