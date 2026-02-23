@@ -27,6 +27,7 @@ export default function App() {
   // --- STATI GLOBALI DI SICUREZZA ---
   const [licenseChecked, setLicenseChecked] = useState(false);   // true = licenza verificata
   const [licenseActivated, setLicenseActivated] = useState(false); // true = licenza valida
+  const [licenseExpiredMsg, setLicenseExpiredMsg] = useState('');  // messaggio scadenza
   const [isLocked, setIsLocked] = useState(true);
   const [blurred, setBlurred] = useState(false);
   const [privacyEnabled, setPrivacyEnabled] = useState(true);
@@ -49,7 +50,15 @@ export default function App() {
     // Controlla prima la licenza, poi carica le impostazioni
     window.api.checkLicense?.().then(lic => {
       setLicenseChecked(true);
-      setLicenseActivated(lic?.activated === true);
+      if (lic?.activated === true) {
+        setLicenseActivated(true);
+      } else {
+        setLicenseActivated(false);
+        // Se scaduta, mostra il motivo
+        if (lic?.expired && lic?.reason) {
+          setLicenseExpiredMsg(lic.reason);
+        }
+      }
     }).catch(() => {
       setLicenseChecked(true);
       setLicenseActivated(false);
@@ -274,7 +283,7 @@ export default function App() {
     return (
       <div className="h-screen w-screen overflow-hidden bg-background">
         <WindowControls />
-        <LicenseScreen onActivated={() => setLicenseActivated(true)} />
+        <LicenseScreen onActivated={() => { setLicenseActivated(true); setLicenseExpiredMsg(''); }} expiredMessage={licenseExpiredMsg} />
       </div>
     );
   }

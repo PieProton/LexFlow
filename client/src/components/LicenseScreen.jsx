@@ -7,9 +7,9 @@ import { KeyRound, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
  * La chiave viene verificata matematicamente (HMAC offline, no internet).
  * Una volta attivata, non viene più chiesta.
  */
-export default function LicenseScreen({ onActivated }) {
+export default function LicenseScreen({ onActivated, expiredMessage }) {
   const [key, setKey] = useState('LXFW-');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(expiredMessage || '');
   const [loading, setLoading] = useState(false);
   const inputRef = useRef(null);
 

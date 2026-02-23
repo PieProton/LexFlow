@@ -453,12 +453,33 @@ fn check_license(state: State<AppState>) -> Value {
     
     let license_key = data.get("key").and_then(|k| k.as_str()).unwrap_or("");
     if !license_key.is_empty() && verify_license_key(license_key) {
-        json!({
-            "activated": true,
-            "key": license_key,
-            "activatedAt": data.get("activatedAt").cloned().unwrap_or(Value::Null),
-            "client": data.get("client").cloned().unwrap_or(Value::Null),
-        })
+        // ── Scadenza 24h: la chiave scade 24 ore dopo l'attivazione ──
+        if let Some(activated_str) = data.get("activatedAt").and_then(|v| v.as_str()) {
+            if let Ok(activated_time) = chrono::DateTime::parse_from_rfc3339(activated_str) {
+                let now = chrono::Utc::now();
+                let elapsed = now.signed_duration_since(activated_time);
+                if elapsed > chrono::Duration::hours(24) {
+                    // Licenza scaduta — rimuovi il file
+                    let _ = fs::remove_file(&path);
+                    return json!({"activated": false, "expired": true, "reason": "Chiave scaduta (24h). Inserisci una nuova chiave."});
+                }
+                let remaining_secs = (chrono::Duration::hours(24) - elapsed).num_seconds().max(0);
+                return json!({
+                    "activated": true,
+                    "key": license_key,
+                    "activatedAt": activated_str,
+                    "client": data.get("client").cloned().unwrap_or(Value::Null),
+                    "remainingSecs": remaining_secs,
+                });
+            }
+            // Fallback: formato vecchio (solo data, no orario) — consideralo scaduto
+            // per forzare la re-attivazione con il nuovo formato timestamp
+            let _ = fs::remove_file(&path);
+            return json!({"activated": false, "expired": true, "reason": "Formato licenza obsoleto. Inserisci una nuova chiave."});
+        }
+        // Nessun activatedAt → formato corrotto
+        let _ = fs::remove_file(&path);
+        json!({"activated": false, "expired": true, "reason": "Licenza corrotta. Inserisci una nuova chiave."})
     } else {
         json!({"activated": false})
     }
@@ -512,7 +533,7 @@ fn activate_license(state: State<AppState>, key: String) -> Value {
     }
     *state.failed_attempts.lock().unwrap() = 0;
     let path = state.data_dir.lock().unwrap().join(LICENSE_FILE);
-    let now = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let now = chrono::Utc::now().to_rfc3339();
     let record = json!({"key": key, "activatedAt": now, "client": "Utente"});
     let enc_key = get_local_encryption_key();
     match encrypt_data(&enc_key, &serde_json::to_vec(&record).unwrap_or_default()) {
