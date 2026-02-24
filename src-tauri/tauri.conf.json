@@ -10,7 +10,7 @@
     "beforeBuildCommand": "cd client && npm run build"
   },
   "app": {
-    "withGlobalTauri": false,
+    "withGlobalTauri": true,
     "macOSPrivateApi": true,
     "windows": [
       {
