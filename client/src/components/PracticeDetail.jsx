@@ -6,6 +6,7 @@ import {
   FilePlus, Info, Fingerprint, ShieldCheck, Download
 } from 'lucide-react';
 import { exportPracticePDF } from '../utils/pdfGenerator';
+import ExportWarningModal from './ExportWarningModal';
 import toast from 'react-hot-toast';
 
 export default function PracticeDetail({ practice, onBack, onUpdate }) {
@@ -13,6 +14,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [biometricVerified, setBiometricVerified] = useState(false);
   const [bioAttempted, setBioAttempted] = useState(false);
+  const [showExportWarning, setShowExportWarning] = useState(false);
   
   // Stati per i form
   const [newNote, setNewNote] = useState('');
@@ -108,11 +110,17 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
     if (practice.folderPath) window.api.openPath(practice.folderPath);
   };
 
-  const handleExport = async () => {
-    // Richiedi password prima di esportare il PDF del diario
+  const handleExport = () => {
+    // Open the security warning modal first — actual export runs only on confirm.
+    setShowExportWarning(true);
+  };
+
+  const handleExportConfirmed = async () => {
+    setShowExportWarning(false);
+    // Re-verify identity before exporting — password prompt acts as a second factor
+    // ensuring someone who unlocked the screen unattended cannot silently export data.
     const pwd = prompt("Inserisci la Master Password per esportare il diario:");
     if (!pwd) return;
-    
     try {
       const result = await window.api.verifyVaultPassword(pwd);
       if (!result || !result.valid) {
@@ -123,7 +131,6 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
       toast.error('Errore verifica password');
       return;
     }
-    
     const success = await exportPracticePDF(practice);
     if (success) toast.success('PDF salvato correttamente');
   };
@@ -543,6 +550,13 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
           </div>
         )}
       </div>
+
+      {/* PDF export security warning — shown before every export */}
+      <ExportWarningModal
+        isOpen={showExportWarning}
+        onClose={() => setShowExportWarning(false)}
+        onConfirm={handleExportConfirmed}
+      />
     </div>
   );
 }

@@ -1684,14 +1684,72 @@ pub fn run() {
                     let _ = w.set_focus();
                 }
 
-                // Window focus/blur events → emit to frontend for privacy shield
+                // Window focus/blur events → privacy shield + intercept close to hide in tray
                 let app_handle = app.handle().clone();
                 if let Some(w) = app.get_webview_window("main") {
+                    let w_clone = w.clone();
                     w.on_window_event(move |event| {
-                        if let tauri::WindowEvent::Focused(focused) = event {
-                            let _ = app_handle.emit("lf-blur", !focused);
+                        match event {
+                            // Privacy shield: emit blur event so frontend can obscure content
+                            tauri::WindowEvent::Focused(focused) => {
+                                let _ = app_handle.emit("lf-blur", !focused);
+                            }
+                            // SYSTEM TRAY FIX: intercept the 'X' close button — hide the window
+                            // instead of terminating the process so the notification scheduler
+                            // keeps running in the background.  The user can quit via tray menu.
+                            tauri::WindowEvent::CloseRequested { api, .. } => {
+                                api.prevent_close();
+                                let _ = w_clone.hide();
+                            }
+                            _ => {}
                         }
                     });
+                }
+
+                // ── System Tray ───────────────────────────────────────────────
+                // Keeps the process alive when the main window is hidden so the
+                // notification scheduler continues running between sessions.
+                {
+                    use tauri::tray::TrayIconBuilder;
+                    use tauri::menu::{Menu, MenuItem};
+
+                    let show_item = MenuItem::with_id(app, "show", "Apri LexFlow", true, None::<&str>)?;
+                    let quit_item = MenuItem::with_id(app, "quit", "Chiudi LexFlow", true, None::<&str>)?;
+                    let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+                    TrayIconBuilder::new()
+                        .tooltip("LexFlow — Gestionale Legale")
+                        .icon(app.default_window_icon().unwrap().clone())
+                        .menu(&tray_menu)
+                        .show_menu_on_left_click(false)
+                        // Right-click / menu item handler
+                        .on_menu_event(|app, event| match event.id.as_ref() {
+                            "show" => {
+                                if let Some(w) = app.get_webview_window("main") {
+                                    let _ = w.show();
+                                    let _ = w.set_focus();
+                                }
+                            }
+                            "quit" => {
+                                // Lock vault before exiting so key is not in memory
+                                let state = app.state::<AppState>();
+                                *state.vault_key.lock().unwrap() = None;
+                                app.exit(0);
+                            }
+                            _ => {}
+                        })
+                        // Left-click directly on the tray icon → show window
+                        .on_tray_icon_event(|tray, event| {
+                            if let tauri::tray::TrayIconEvent::Click {
+                                button: tauri::tray::MouseButton::Left, ..
+                            } = event {
+                                if let Some(w) = tray.app_handle().get_webview_window("main") {
+                                    let _ = w.show();
+                                    let _ = w.set_focus();
+                                }
+                            }
+                        })
+                        .build(app)?;
                 }
             }
 
