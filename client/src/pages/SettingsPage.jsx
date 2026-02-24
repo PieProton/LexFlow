@@ -9,7 +9,13 @@ import {
   Bell,
   Clock,
   Camera,
-  Timer
+  Timer,
+  Upload,
+  Download,
+  Smartphone,
+  Monitor,
+  ArrowLeftRight,
+  Info
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -45,6 +51,11 @@ export default function SettingsPage({ onLock }) {
   // Stato per Sicurezza Avanzata
   const [screenshotProtection, setScreenshotProtection] = useState(true);
   const [autolockMinutes, setAutolockMinutes] = useState(5);
+  
+  // Modal Factory Reset (sostituisce window.prompt — non espone password in chiaro)
+  const [showFactoryReset, setShowFactoryReset] = useState(false);
+  const [factoryResetPwd, setFactoryResetPwd] = useState('');
+  const [factoryResetError, setFactoryResetError] = useState('');
 
   useEffect(() => {
     if (window.api) {
@@ -110,6 +121,34 @@ export default function SettingsPage({ onLock }) {
       }
     } catch (e) {
       toast.error('Errore critico durante il backup', { id: toastId });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImportBackup = async () => {
+    if (!window.api || !window.api.importVault) {
+      toast.error("Servizio di importazione non disponibile");
+      return;
+    }
+    const pwd = prompt("Inserisci la password con cui è stato cifrato il file di backup:");
+    if (!pwd) return;
+    if (!window.confirm("⚠️ L'importazione sovrascrive tutti i dati attuali del vault. Continuare?")) return;
+
+    setLoading(true);
+    const toastId = toast.loading('Importazione in corso...');
+    try {
+      const result = await window.api.importVault(pwd);
+      if (result && result.success) {
+        toast.success('Vault importato con successo! Ricarico...', { id: toastId });
+        setTimeout(() => window.location.reload(), 1500);
+      } else if (result && result.cancelled) {
+        toast.dismiss(toastId);
+      } else {
+        toast.error('Errore: ' + (result?.error || 'Password errata o file non valido'), { id: toastId });
+      }
+    } catch (e) {
+      toast.error('Errore critico durante l\'importazione', { id: toastId });
     } finally {
       setLoading(false);
     }
@@ -305,20 +344,65 @@ export default function SettingsPage({ onLock }) {
             <h2 className="text-lg font-bold text-white">Gestione Dati</h2>
           </div>
 
+          {/* Banner sistema chiuso */}
+          <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/5 border border-amber-500/20">
+            <ArrowLeftRight size={16} className="text-amber-400 mt-0.5 shrink-0" />
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Sistema Chiuso — Vault Indipendenti</p>
+              <p className="text-xs text-text-muted leading-relaxed">
+                Il vault su <span className="text-white font-medium inline-flex items-center gap-1"><Monitor size={11} /> desktop</span> e
+                su <span className="text-white font-medium inline-flex items-center gap-1"><Smartphone size={11} /> Android</span> sono 
+                cifrati con chiavi distinte, legate al singolo dispositivo. Non condividono dati in automatico.
+                <br />
+                Per portare i dati da un dispositivo all'altro: <span className="text-emerald-400 font-semibold">Esporta</span> sul dispositivo sorgente,
+                poi <span className="text-emerald-400 font-semibold">Importa</span> su quello di destinazione con la stessa password di backup.
+              </p>
+            </div>
+          </div>
+
+          {/* Export */}
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div className="space-y-1">
-              <span className="font-medium text-white">Backup Crittografato</span>
+              <div className="flex items-center gap-2">
+                <Download size={15} className="text-emerald-400" />
+                <span className="font-medium text-white">Esporta Backup</span>
+              </div>
               <p className="text-xs text-text-muted max-w-lg">
-                Esporta fascicoli e agenda in un file <code className="text-emerald-400">.lex</code> cifrato.
+                Salva fascicoli e agenda in un file <code className="text-emerald-400">.lex</code> cifrato con una password a tua scelta.
+                Usalo per trasferire i dati su un altro dispositivo o per un backup sicuro.
               </p>
             </div>
             <button 
               onClick={handleExportBackup} 
               disabled={loading}
-              className={`btn-primary px-6 py-2.5 text-sm flex items-center gap-2 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              className={`btn-primary px-6 py-2.5 text-sm flex items-center gap-2 shrink-0 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              {loading ? <RefreshCw size={16} className="animate-spin" /> : <FileText size={16} />}
-              {loading ? 'Esportazione...' : 'Esporta Backup'}
+              {loading ? <RefreshCw size={16} className="animate-spin" /> : <Download size={16} />}
+              {loading ? 'Esportazione...' : 'Esporta .lex'}
+            </button>
+          </div>
+
+          <div className="border-t border-white/5" />
+
+          {/* Import */}
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Upload size={15} className="text-blue-400" />
+                <span className="font-medium text-white">Importa Backup</span>
+              </div>
+              <p className="text-xs text-text-muted max-w-lg">
+                Ripristina un file <code className="text-blue-400">.lex</code> esportato in precedenza.
+                <span className="text-amber-400 font-medium"> Attenzione: sovrascrive i dati attuali.</span>
+              </p>
+            </div>
+            <button 
+              onClick={handleImportBackup} 
+              disabled={loading}
+              className={`px-6 py-2.5 text-sm flex items-center gap-2 shrink-0 rounded-lg border border-blue-500/30 text-blue-400 hover:bg-blue-500/10 transition-colors ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {loading ? <RefreshCw size={16} className="animate-spin" /> : <Upload size={16} />}
+              {loading ? 'Importazione...' : 'Importa .lex'}
             </button>
           </div>
         </section>
@@ -326,18 +410,63 @@ export default function SettingsPage({ onLock }) {
 
       <div className="pt-12 text-center">
         <button 
-          onClick={async () => {
-            if(window.confirm("Cancellare l'intero database? Questa azione è irreversibile.")) {
-               const res = await window.api.resetVault();
-               if(res.success) window.location.reload();
-            }
-          }}
+          onClick={() => { setShowFactoryReset(true); setFactoryResetPwd(''); setFactoryResetError(''); }}
           className="text-[10px] font-black text-red-500/30 hover:text-red-500 uppercase tracking-[4px] transition-all flex items-center justify-center gap-3 mx-auto py-4 border border-transparent hover:border-red-500/10 rounded-full px-8"
         >
           <LogOut size={14} />
           Factory Reset Vault
         </button>
       </div>
+
+      {/* Factory Reset Modal — sostituisce window.prompt (shoulder surfing safe) */}
+      {showFactoryReset && (
+        <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#13141e] border border-red-500/20 rounded-2xl p-8 max-w-sm w-full shadow-2xl">
+            <h3 className="text-white font-bold text-lg mb-2">⚠️ Factory Reset</h3>
+            <p className="text-text-muted text-xs mb-4 leading-relaxed">
+              Stai per cancellare <span className="text-red-400 font-bold">tutti i dati del Vault</span>. 
+              Inserisci la password per confermare.
+            </p>
+            <input 
+              type="password"
+              className="w-full py-3 px-4 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-white/20 text-sm mb-4 focus:border-red-500/40 outline-none transition-colors"
+              placeholder="Password vault..."
+              value={factoryResetPwd}
+              onChange={e => setFactoryResetPwd(e.target.value)}
+              autoFocus
+              onKeyDown={async (e) => {
+                if (e.key === 'Enter' && factoryResetPwd) {
+                  const res = await window.api.resetVault(factoryResetPwd);
+                  if (res?.success) { setShowFactoryReset(false); window.location.reload(); }
+                  else { setFactoryResetError(res?.error || 'Password errata.'); }
+                }
+              }}
+            />
+            {factoryResetError && (
+              <p className="text-red-400 text-[11px] font-semibold mb-4">{factoryResetError}</p>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowFactoryReset(false)}
+                className="flex-1 py-2.5 rounded-xl border border-white/10 text-text-muted text-xs font-bold uppercase tracking-widest hover:bg-white/5 transition-colors"
+              >
+                Annulla
+              </button>
+              <button
+                onClick={async () => {
+                  if (!factoryResetPwd) { setFactoryResetError('Password richiesta.'); return; }
+                  const res = await window.api.resetVault(factoryResetPwd);
+                  if (res?.success) { setShowFactoryReset(false); window.location.reload(); }
+                  else { setFactoryResetError(res?.error || 'Password errata.'); }
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-bold uppercase tracking-widest hover:bg-red-500/30 transition-colors"
+              >
+                Conferma Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

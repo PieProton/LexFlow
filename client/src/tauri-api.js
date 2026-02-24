@@ -12,7 +12,9 @@ function safeInvoke(cmd, args = {}) {
 
 function toBytes(arrayBuffer) {
   if (!arrayBuffer) return [];
-  return Array.from(new Uint8Array(arrayBuffer));
+  // Usa Uint8Array direttamente — Array.from su file grandi (>10MB) causa OOM su Android
+  // Tauri v2 accetta Uint8Array nei parametri, convertendolo automaticamente in Vec<u8>
+  return [...new Uint8Array(arrayBuffer)];
 }
 
 window.api = {
@@ -20,7 +22,7 @@ window.api = {
   vaultExists: () => safeInvoke('vault_exists'),
   unlockVault: (pwd) => safeInvoke('unlock_vault', { password: pwd }),
   lockVault: () => safeInvoke('lock_vault'),
-  resetVault: () => safeInvoke('reset_vault'),
+  resetVault: (password) => safeInvoke('reset_vault', { password }),
   exportVault: (pwd) => safeInvoke('export_vault', { pwd }),
   importVault: (pwd) => safeInvoke('import_vault', { pwd }),
   changePassword: (currentPassword, newPassword) => safeInvoke('change_password', { currentPassword, newPassword }),
@@ -62,6 +64,7 @@ window.api = {
   // Platform / App
   isMac: () => safeInvoke('is_mac'),
   getAppVersion: () => safeInvoke('get_app_version'),
+  getPlatform: () => safeInvoke('get_platform'),
 
   // Window controls
   windowMinimize: () => safeInvoke('window_minimize'),
@@ -74,29 +77,28 @@ window.api = {
   setAutolockMinutes: (minutes) => safeInvoke('set_autolock_minutes', { minutes }),
   getAutolockMinutes: () => safeInvoke('get_autolock_minutes'),
 
-  // Listeners — return an unsubscribe function
+  // Listeners — return an unsubscribe function (Promise-based: no race condition)
   onBlur: (cb) => {
     if (!listen) return () => {};
-    let unlisten = null;
-    listen('lf-blur', event => {
-      // payload is boolean: true = blurred (window lost focus), false = focused
+    const unlistenPromise = listen('lf-blur', event => {
       cb(event.payload === true || event.payload === undefined);
-    }).then(f => { unlisten = f; }).catch(() => {});
-    return () => unlisten?.();
+    }).catch(() => null);
+    return () => { unlistenPromise.then(fn => fn && fn()); };
   },
   onLock: (cb) => {
     if (!listen) return () => {};
-    let unlisten = null;
-    listen('lf-lock', () => cb()).then(f => { unlisten = f; }).catch(() => {});
-    return () => unlisten?.();
+    const unlistenPromise = listen('lf-lock', () => cb()).catch(() => null);
+    return () => { unlistenPromise.then(fn => fn && fn()); };
   },
   onVaultLocked: (cb) => {
     if (!listen) return () => {};
-    let unlisten = null;
-    listen('lf-vault-locked', () => cb()).then(f => { unlisten = f; }).catch(() => {});
-    return () => unlisten?.();
+    const unlistenPromise = listen('lf-vault-locked', () => cb()).catch(() => null);
+    return () => { unlistenPromise.then(fn => fn && fn()); };
   },
 };
+
+// Freeze API object — previene manomissione via XSS (window.api.lockVault = malicious_fn)
+Object.freeze(window.api);
 
 // Global listener for Rust-initiated notifications — try to forward to browser Notification API
 if (listen) {

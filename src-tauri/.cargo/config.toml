@@ -10,5 +10,7 @@ rustflags = [
 ]
 
 [target.x86_64-pc-windows-msvc]
-linker = "/opt/homebrew/bin/lld-link"
-rustflags = ["-C", "linker-flavor=msvc"]
+# cargo-xwin gestisce il download automatico delle Windows SDK libs e wrappa lld-link
+linker = "rust-lld"
+runner = "cargo xwin"
+rustflags = ["-C", "linker-flavor=msvc", "-C", "link-arg=-fuse-ld=lld"]

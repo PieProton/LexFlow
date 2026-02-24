@@ -1,7 +1,7 @@
 {
   "name": "client",
   "private": true,
-  "version": "2.3.4",
+  "version": "2.3.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",
+    "framer-motion": "^12.34.3",
     "jspdf": "^4.1.0",
     "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.564.0",

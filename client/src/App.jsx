@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 // Componenti
 import LoginScreen from './components/LoginScreen';
 import LicenseScreen from './components/LicenseScreen';
-import Sidebar from './components/Sidebar';
+import Sidebar, { HamburgerButton } from './components/Sidebar';
 import WindowControls from './components/WindowControls';
 import PracticeDetail from './components/PracticeDetail';
 import CreatePracticeModal from './components/CreatePracticeModal';
@@ -34,6 +34,9 @@ export default function App() {
   const [screenshotProtection, setScreenshotProtection] = useState(true);
   const [autolockMinutes, setAutolockMinutes] = useState(5);
   const [version, setVersion] = useState('');
+
+  // --- STATO SIDEBAR MOBILE ---
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   
   // --- STATI DEI DATI & NOTIFICHE ---
   const [practices, setPractices] = useState([]);
@@ -41,7 +44,9 @@ export default function App() {
   const [settings, setSettings] = useState({});
   const [selectedId, setSelectedId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [sentNotifications, setSentNotifications] = useState(new Set());
+  // Ref invece di state per sentNotifications: evita re-render e ciclo infinito
+  // nell'effect delle notifiche (sentNotifications era nelle dipendenze → loop)
+  const sentNotificationsRef = useRef(new Set());
 
   // --- 1. INIZIALIZZAZIONE ---
   useEffect(() => {
@@ -89,7 +94,10 @@ export default function App() {
 
     const pingBackend = () => window.api.pingActivity?.();
     
-    const events = ['mousedown', 'keydown', 'scroll', 'touchstart', 'mousemove'];
+    // Solo eventi intenzionali — mousemove e scroll generano troppi eventi
+    // e thrashano il main thread (specialmente su Android). mousedown/keydown/touchstart
+    // sono sufficienti per rilevare attività utente reale.
+    const events = ['mousedown', 'keydown', 'touchstart'];
     let lastPing = 0;
     const throttledPing = () => {
       const now = Date.now();
@@ -119,20 +127,19 @@ export default function App() {
 
       // A. Controllo Agenda
       agendaEvents.forEach(event => {
-        if (event.completed || event.category === 'scadenza') return; // Evitiamo doppioni se già sincronizzato
+        if (event.completed || event.category === 'scadenza') return;
 
         const eventTime = new Date(`${event.date}T${event.timeStart}`);
         const diff = eventTime - now;
 
-        // Se l'evento è nel futuro e rientra nella finestra di preavviso
         if (diff > 0 && diff <= leadTimeMs) {
           const nId = `agenda-${event.id}`;
-          if (!sentNotifications.has(nId)) {
+          if (!sentNotificationsRef.current.has(nId)) {
             window.api.sendNotification({
               title: `📅 Impegno tra poco: ${event.title}`,
               body: `L'evento inizierà alle ore ${event.timeStart}.`
             });
-            setSentNotifications(prev => new Set(prev).add(nId));
+            sentNotificationsRef.current.add(nId);
           }
         }
       });
@@ -146,12 +153,12 @@ export default function App() {
 
           if (isToday) {
             const nId = `deadline-${p.id}-${d.label}-${d.date}`;
-            if (!sentNotifications.has(nId)) {
+            if (!sentNotificationsRef.current.has(nId)) {
               window.api.sendNotification({
                 title: `📋 Scadenza Oggi: ${d.label}`,
                 body: `Fascicolo: ${p.client} - Rif: ${p.code || 'N/D'}`
               });
-              setSentNotifications(prev => new Set(prev).add(nId));
+              sentNotificationsRef.current.add(nId);
             }
           }
         });
@@ -163,14 +170,15 @@ export default function App() {
     checkAndNotify(); // Primo controllo immediato allo sblocco
 
     return () => clearInterval(interval);
-  }, [isLocked, practices, agendaEvents, settings, sentNotifications]);
+  // sentNotificationsRef è una ref stabile — non va nelle dipendenze (evita loop)
+  }, [isLocked, practices, agendaEvents, settings]);
 
   // --- 3. GESTIONE SICUREZZA (BLUR & LOCK) ---
   const handleLockLocal = useCallback(() => {
     setBlurred(false);
     setPractices([]); 
     setAgendaEvents([]);
-    setSentNotifications(new Set()); // Resettiamo le notifiche inviate per la prossima sessione
+    sentNotificationsRef.current = new Set(); // reset ref — nessun re-render
     setSelectedId(null);
     setIsLocked(true);
     navigate('/');
@@ -201,12 +209,20 @@ export default function App() {
   // --- 4. LOGICA DATI & SINCRONIZZAZIONE ---
   const syncDeadlinesToAgenda = useCallback((newPractices, currentAgenda) => {
     const manualEvents = currentAgenda.filter(e => !e.autoSync);
+    // Mappa degli eventi auto-sincronizzati esistenti per preservare le modifiche utente
+    // (es. orario personalizzato, note aggiuntive, completamento)
+    const existingSyncedMap = new Map();
+    currentAgenda.filter(e => e.autoSync).forEach(e => existingSyncedMap.set(e.id, e));
+    
     const syncedEvents = [];
     
     newPractices.filter(p => p.status === 'active').forEach(p => {
       (p.deadlines || []).forEach(d => {
+        const syncId = `deadline_${p.id}_${d.date}_${d.label.replace(/\s/g, '_')}`;
+        const existing = existingSyncedMap.get(syncId);
         syncedEvents.push({
-          id: `deadline_${p.id}_${d.date}_${d.label.replace(/\s/g, '_')}`,
+          // Valori default per nuovi eventi
+          id: syncId,
           title: `📋 ${d.label}`,
           date: d.date,
           timeStart: '09:00',
@@ -216,6 +232,13 @@ export default function App() {
           completed: false,
           autoSync: true,
           practiceId: p.id,
+          // Sovrascrivi con eventuali modifiche utente (orario, note, completamento)
+          ...(existing ? {
+            timeStart: existing.timeStart,
+            timeEnd: existing.timeEnd,
+            notes: existing.notes,
+            completed: existing.completed,
+          } : {}),
         });
       });
     });
@@ -320,11 +343,16 @@ export default function App() {
           </div>
         )}
 
+        {/* Sidebar desktop (≥1024px) + Liquid Curtain mobile (<1024px) */}
         <Sidebar 
           version={version} 
-          onLock={handleManualLock} 
-          activePage={location.pathname}
+          onLock={handleManualLock}
+          isOpen={sidebarOpen}
+          onToggle={setSidebarOpen}
         />
+
+        {/* Hamburger button — visibile solo su mobile (<1024px), gestito via CSS */}
+        <HamburgerButton onClick={() => setSidebarOpen(true)} />
 
         <main className="flex-1 h-screen overflow-hidden relative flex flex-col bg-background">
           <WindowControls />

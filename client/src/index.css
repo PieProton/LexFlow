@@ -60,7 +60,15 @@
     font-size: 14px;
     line-height: 1.5;
     overflow: hidden;
+    /* Disabilita selezione testo su mobile */
+    -webkit-user-select: none;
+    user-select: none;
+    /* Previeni zoom accidentale su double-tap */
+    touch-action: manipulation;
   }
+
+  /* Riabilita selezione su input/textarea */
+  input, textarea { -webkit-user-select: text; user-select: text; }
 
   a { color: var(--primary); text-decoration: none; }
 }
@@ -510,3 +518,137 @@
   border-bottom: 1px solid rgba(255,255,255,0.05);
   background: rgba(0,0,0,0.2);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE MOBILE — Android / piccoli schermi
+   Breakpoint principale: max-width 1024px (allineato al Liquid Curtain)
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Hamburger button: nascosto su desktop ── */
+.hamburger-btn {
+  display: none;
+}
+
+/* Safe area utilities per Android/notch */
+@supports (padding: env(safe-area-inset-top)) {
+  .safe-top    { padding-top: env(safe-area-inset-top); }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+  .safe-left   { padding-left: env(safe-area-inset-left); }
+  .safe-right  { padding-right: env(safe-area-inset-right); }
+}
+
+@media (max-width: 1024px) {
+
+  /* ── Hamburger button visibile su mobile ── */
+  .hamburger-btn {
+    display: flex !important;
+  }
+
+  /* ── Body & Root ── */
+  body {
+    font-size: 15px;
+    overflow: auto;
+  }
+
+  /* ── Main content: padding per hamburger in alto ── */
+  .main-content {
+    padding: 16px;
+    padding-top: 64px; /* lascia spazio all'hamburger button */
+  }
+
+  /* ── Finestra titolo bar: nascosta su Android ── */
+  .window-controls { display: none !important; }
+  [data-tauri-drag-region],
+  .drag-region,
+  .sidebar-traffic-spacer {
+    display: none !important;
+  }
+
+  /* ── Touch Targets ── */
+  button, a, [role="button"],
+  .btn-primary, .btn-ghost, .btn-danger {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* ── Cards: padding ridotto ── */
+  .glass-card {
+    padding: 14px;
+  }
+
+  /* ── Modal: full-screen su mobile ── */
+  .modal-content {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92dvh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    margin: 0;
+  }
+  .modal-backdrop {
+    align-items: flex-end;
+  }
+
+  /* ── Scrolling touch-friendly ── */
+  .main-content,
+  .modal-content,
+  [class*="overflow-y"] {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  /* ── Typography scaling ── */
+  h1, .text-3xl { font-size: 1.5rem; }
+  h2, .text-2xl { font-size: 1.25rem; }
+  h3, .text-xl  { font-size: 1.1rem; }
+
+  /* ── Input: taglia minima per touch ── */
+  .input-field {
+    padding: 12px 16px;
+    font-size: 16px; /* previene zoom iOS/Android su focus */
+    border-radius: var(--radius-sm);
+  }
+
+  /* ── Buttons: più alti per touch ── */
+  .btn-primary, .btn-ghost, .btn-danger {
+    padding: 14px 20px;
+    font-size: 15px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* ── Grid: singola colonna ── */
+  .grid-cols-3,
+  .grid-cols-4,
+  .sm\:grid-cols-2,
+  .md\:grid-cols-3 {
+    grid-template-columns: 1fr !important;
+  }
+
+  .grid-cols-2 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* ── Tabelle: scroll orizzontale ── */
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ── Header pagina compatto ── */
+  .page-header {
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  /* ── Scroll lock body (applicato da JS via data-scroll-locked) ── */
+  body[data-scroll-locked] {
+    overflow: hidden;
+    padding-right: var(--scrollbar-width, 0px);
+  }
+}
+

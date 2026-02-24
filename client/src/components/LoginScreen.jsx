@@ -7,8 +7,7 @@ import {
   Fingerprint, 
   KeyRound, 
   ShieldAlert, 
-  CheckCircle2, 
-  ArrowRight 
+  CheckCircle2
 } from 'lucide-react';
 import logoSrc from '../assets/logo.png';
 
@@ -26,7 +25,11 @@ export default function LoginScreen({ onUnlock }) {
   const [bioSaved, setBioSaved] = useState(false);
   const [bioFailed, setBioFailed] = useState(0);
   const [showPasswordField, setShowPasswordField] = useState(false);
-  const [recoveryCode, setRecoveryCode] = useState(null);
+  
+  // Modal per Reset Vault (sostituisce window.prompt — non mostra password in chiaro)
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetError, setResetError] = useState('');
   
   const bioTriggered = useRef(false);
   const MAX_BIO_ATTEMPTS = 3;
@@ -89,14 +92,16 @@ export default function LoginScreen({ onUnlock }) {
     if (pwd.length >= 8) score++;
     if (pwd.length >= 12) score++;
     if (/[A-Z]/.test(pwd)) score++;
+    if (/[a-z]/.test(pwd)) score++;
     if (/[0-9]/.test(pwd)) score++;
     if (/[^A-Za-z0-9]/.test(pwd)) score++;
-    
-    if (score <= 1) return { label: 'Debole', color: 'bg-red-500', pct: 20, segments: 1 };
-    if (score <= 2) return { label: 'Sufficiente', color: 'bg-yellow-500', pct: 40, segments: 2 };
-    if (score <= 3) return { label: 'Buona', color: 'bg-amber-400', pct: 60, segments: 3 };
-    if (score <= 4) return { label: 'Forte', color: 'bg-primary', pct: 80, segments: 4 };
-    return { label: 'Eccellente', color: 'bg-emerald-500', pct: 100, segments: 5 };
+    // 6 criteri → 6 segmenti. "Eccellente" (6/6) = isPasswordStrong soddisfatto
+    if (score <= 1) return { label: 'Debole', color: 'bg-red-500', pct: 17, segments: 1 };
+    if (score <= 2) return { label: 'Insufficiente', color: 'bg-orange-500', pct: 33, segments: 2 };
+    if (score <= 3) return { label: 'Sufficiente', color: 'bg-yellow-500', pct: 50, segments: 3 };
+    if (score <= 4) return { label: 'Buona', color: 'bg-amber-400', pct: 67, segments: 4 };
+    if (score <= 5) return { label: 'Forte', color: 'bg-primary', pct: 83, segments: 5 };
+    return { label: 'Eccellente', color: 'bg-emerald-500', pct: 100, segments: 6 };
   };
 
   const isPasswordStrong = (pwd) => {
@@ -124,16 +129,14 @@ export default function LoginScreen({ onUnlock }) {
       const result = await window.api.unlockVault(password);
       
       if (result.success) {
-        // Se la biometria è disponibile ma non salvata, chiedi di salvarla ora (silenziosamente)
-        if (bioAvailable) { 
-          try { await window.api.saveBio(password); } catch (e) { console.error(e); } 
+        if (result.isNew && bioAvailable && !bioSaved) {
+          const consent = window.confirm("Vuoi abilitare l'accesso biometrico (Face ID / Touch ID / impronta) per accedere più velocemente?");
+          if (consent) {
+            try { await window.api.saveBio(password); } catch (e) { console.error(e); }
+          }
         }
 
-        if (result.isNew && result.recoveryCode) {
-          setRecoveryCode(result.recoveryCode);
-        } else {
-          onUnlock();
-        }
+        onUnlock();
       } else {
         setError(result.error || 'Password errata');
         setLoading(false);
@@ -199,37 +202,9 @@ export default function LoginScreen({ onUnlock }) {
   return (
     <div className="flex items-center justify-center min-h-screen bg-background relative drag-region overflow-hidden">
       
-      {/* Background Decor */}
-      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/5 blur-[120px] rounded-full" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-primary/5 blur-[120px] rounded-full" />
-
-      {/* Recovery Code Modal */}
-      {recoveryCode && (
-        <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-xl flex items-center justify-center p-4">
-          <div className="glass-card p-10 max-w-md w-full text-center shadow-2xl no-drag animate-slide-up border-primary/30">
-            <div className="w-20 h-20 bg-primary/10 rounded-3xl flex items-center justify-center mx-auto mb-6 border border-primary/20">
-              <ShieldAlert size={40} className="text-primary" />
-            </div>
-            <h2 className="text-2xl font-bold text-white mb-3">Backup di Emergenza</h2>
-            <p className="text-text-muted text-sm mb-8 leading-relaxed">
-              Questo codice è l'unico modo per recuperare i tuoi dati se dimentichi la password. 
-              <span className="text-warning font-bold block mt-1 uppercase text-[10px] tracking-widest">Salvalo ora, non verrà più mostrato.</span>
-            </p>
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 mb-8 select-all group hover:border-primary/40 transition-colors">
-              <p className="font-mono text-xl text-primary tracking-[4px] font-bold break-all uppercase">
-                {recoveryCode}
-              </p>
-            </div>
-            <button 
-              onClick={() => { navigator.clipboard?.writeText(recoveryCode); setRecoveryCode(null); onUnlock(); }} 
-              className="btn-primary w-full py-4 text-sm font-bold uppercase tracking-widest flex items-center justify-center gap-2 group"
-            >
-              Copia Codice e Inizia
-              <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Background Decor — no blur-[120px] che killava la GPU su Android */}
+      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/5 rounded-full opacity-30" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-primary/5 rounded-full opacity-30" />
 
       {/* Login / Setup Card */}
       <div className="glass-card p-10 w-[440px] relative z-10 no-drag animate-slide-up shadow-2xl border-white/10">
@@ -308,7 +283,7 @@ export default function LoginScreen({ onUnlock }) {
                   </span>
                 </div>
                 <div className="flex gap-1.5 h-1.5">
-                  {[1, 2, 3, 4, 5].map((s) => (
+                  {[1, 2, 3, 4, 5, 6].map((s) => (
                     <div 
                       key={s} 
                       className={`h-full flex-1 rounded-full transition-all duration-500 ${s <= strength.segments ? strength.color : 'bg-white/10'}`} 
@@ -363,12 +338,7 @@ export default function LoginScreen({ onUnlock }) {
           {!isNew && (
             <button 
               type="button" 
-              onClick={async () => {
-                if (window.confirm("Sei sicuro? Perderai tutti i dati.")) {
-                  const result = await window.api.resetVault();
-                  if (result?.success) { setIsNew(true); setPassword(''); setConfirm(''); setError(''); setBioSaved(false); }
-                }
-              }} 
+              onClick={() => { setShowResetModal(true); setResetPassword(''); setResetError(''); }}
               className="text-text-dim hover:text-red-500 text-[10px] font-bold uppercase tracking-widest transition-colors"
             >
               Password dimenticata? Reset Vault
@@ -388,6 +358,76 @@ export default function LoginScreen({ onUnlock }) {
           </div>
         </div>
       </div>
+
+      {/* Reset Vault Modal — sostituisce window.prompt (no password in chiaro nel UI) */}
+      {showResetModal && (
+        <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="glass-card p-8 max-w-sm w-full shadow-2xl no-drag animate-slide-up border-red-500/20">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-500/10 rounded-xl flex items-center justify-center border border-red-500/20">
+                <ShieldAlert size={20} className="text-red-500" />
+              </div>
+              <div>
+                <h3 className="text-white font-bold text-sm">Factory Reset</h3>
+                <p className="text-text-dim text-[10px]">Tutti i dati verranno eliminati</p>
+              </div>
+            </div>
+            <p className="text-text-muted text-xs mb-4 leading-relaxed">
+              Inserisci la password attuale per confermare il reset completo del Vault. 
+              <span className="text-red-400 font-semibold"> Questa azione è irreversibile.</span>
+            </p>
+            <div className="relative mb-4">
+              <input 
+                type="password"
+                className="input-field w-full py-3 px-4 rounded-xl bg-white/5 border-white/10 text-white placeholder:text-white/20 text-sm"
+                placeholder="Password attuale..."
+                value={resetPassword}
+                onChange={e => setResetPassword(e.target.value)}
+                autoFocus
+                onKeyDown={async (e) => {
+                  if (e.key === 'Enter' && resetPassword) {
+                    const result = await window.api.resetVault(resetPassword);
+                    if (result?.success) {
+                      setShowResetModal(false);
+                      setIsNew(true); setPassword(''); setConfirm(''); setError(''); setBioSaved(false);
+                    } else {
+                      setResetError(result?.error || 'Password errata.');
+                    }
+                  }
+                }}
+              />
+            </div>
+            {resetError && (
+              <div className="bg-red-500/10 border border-red-500/20 p-2 rounded-lg mb-4">
+                <p className="text-red-400 text-[11px] font-semibold">{resetError}</p>
+              </div>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowResetModal(false)}
+                className="flex-1 py-2.5 rounded-xl border border-white/10 text-text-muted text-xs font-bold uppercase tracking-widest hover:bg-white/5 transition-colors"
+              >
+                Annulla
+              </button>
+              <button
+                onClick={async () => {
+                  if (!resetPassword) { setResetError('Password richiesta.'); return; }
+                  const result = await window.api.resetVault(resetPassword);
+                  if (result?.success) {
+                    setShowResetModal(false);
+                    setIsNew(true); setPassword(''); setConfirm(''); setError(''); setBioSaved(false);
+                  } else {
+                    setResetError(result?.error || 'Password errata.');
+                  }
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-bold uppercase tracking-widest hover:bg-red-500/30 transition-colors"
+              >
+                Conferma Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
