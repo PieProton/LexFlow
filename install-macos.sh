@@ -8,6 +8,7 @@ DMG_DIR="$BUNDLE_DIR/dmg"
 APP_SRC="$BUNDLE_DIR/macos/LexFlow.app"
 APP_DEST="/Applications/LexFlow.app"
 DESKTOP_APP="$HOME/Desktop/LexFlow.app"
+DISTRIB_DIR="$HOME/Desktop/Le Mie App/LexFlow"
 
 echo "╔══════════════════════════════════════╗"
 echo "║   LexFlow — Build + Install macOS    ║"
@@ -55,7 +56,16 @@ if [ -d "$DESKTOP_APP" ]; then
     echo "   ✓ Desktop/LexFlow.app aggiornata (v$VERSION)"
 fi
 
-# ── 6. Mostra percorso DMG finale ─────────────────────────────────────────────
+# ── 6. Copia DMG in "Le Mie App/LexFlow" ─────────────────────────────────────
+mkdir -p "$DISTRIB_DIR"
+if [ -n "$DMG_FILE" ]; then
+    # Rimuovi vecchi DMG LexFlow dalla cartella
+    find "$DISTRIB_DIR" -name "LexFlow_*.dmg" -delete 2>/dev/null || true
+    cp "$DMG_FILE" "$DISTRIB_DIR/"
+    echo "   ✓ DMG copiato in ~/Desktop/Le Mie App/LexFlow/"
+fi
+
+# ── 7. Mostra percorso DMG finale ─────────────────────────────────────────────
 DMG_FILE=$(find "$DMG_DIR" -name "*.dmg" ! -name "rw.*.dmg" 2>/dev/null | head -1)
 if [ -n "$DMG_FILE" ]; then
     DMG_SIZE=$(du -sh "$DMG_FILE" | cut -f1)
