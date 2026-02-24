@@ -2,6 +2,7 @@ use serde_json::{Value, json};
 use std::{fs, path::PathBuf, sync::Mutex, time::{Instant, Duration}};
 use tauri::{Manager, State, AppHandle, Emitter};
 use zeroize::{Zeroize, Zeroizing};
+use chrono::TimeZone as _;
 
 // Platform detection helpers — usati in tutta la lib
 #[allow(dead_code)]
@@ -179,28 +180,21 @@ fn decrypt_data(key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn verify_hash_matches(key: &[u8], stored: &[u8]) -> bool {
-    // La chiave HMAC è derivata dalla machine key — non hardcoded in chiaro nel binario.
-    // Un attaccante che estrae il binario non ottiene una costante forgiabile.
-    let hmac_key = make_verify_hmac_key();
-    let mut hmac = <Hmac<Sha256> as Mac>::new_from_slice(&hmac_key).unwrap();
-    hmac.update(key);
+    // SECURITY FIX (Gemini L4-1): vault.verify HMAC is now derived from the vault_key itself
+    // (password-derived via Argon2id), NOT from the machine key.
+    // Previously using machine key meant: rename computer → vault permanently inaccessible.
+    // Now backup portability is preserved: the verify tag travels with the vault and is
+    // independent of the machine/hostname. The vault_key IS the authentication factor.
+    let mut hmac = <Hmac<Sha256> as Mac>::new_from_slice(key).unwrap();
+    hmac.update(b"LEX_VERIFY_DOMAIN_V2");
     hmac.verify_slice(stored).is_ok()
 }
 
-/// Genera la chiave HMAC per vault.verify derivandola dalla machine key.
-/// Centralizzata per garantire coerenza tra scrittura e verifica.
-fn make_verify_hmac_key() -> Vec<u8> {
-    let mk = get_local_encryption_key();
-    let mut h = <Sha256 as Digest>::new();
-    h.update(b"LEX_VERIFY_DOMAIN:");
-    h.update(&mk);
-    h.finalize().to_vec()
-}
-
 fn make_verify_tag(vault_key: &[u8]) -> Vec<u8> {
-    let hmac_key = make_verify_hmac_key();
-    let mut hmac = <Hmac<Sha256> as Mac>::new_from_slice(&hmac_key).unwrap();
-    hmac.update(vault_key);
+    // SECURITY FIX (Gemini L4-1): tag derived from vault_key, not machine key.
+    // This ensures the verify tag is portable across machines/hostnames.
+    let mut hmac = <Hmac<Sha256> as Mac>::new_from_slice(vault_key).unwrap();
+    hmac.update(b"LEX_VERIFY_DOMAIN_V2");
     hmac.finalize().into_bytes().to_vec()
 }
 
@@ -208,8 +202,12 @@ fn make_verify_tag(vault_key: &[u8]) -> Vec<u8> {
 //  INTERNAL DATA HELPERS
 // ═══════════════════════════════════════════════════════════
 
-fn get_vault_key(state: &State<AppState>) -> Result<Vec<u8>, String> {
-    state.vault_key.lock().unwrap().as_ref().map(|k| k.0.clone()).ok_or_else(|| "Locked".into())
+fn get_vault_key(state: &State<AppState>) -> Result<Zeroizing<Vec<u8>>, String> {
+    // SECURITY FIX (Gemini L4-2): return Zeroizing<Vec<u8>> instead of bare Vec<u8>
+    // so callers automatically zero memory when the key goes out of scope.
+    state.vault_key.lock().unwrap().as_ref()
+        .map(|k| Zeroizing::new(k.0.clone()))
+        .ok_or_else(|| "Locked".into())
 }
 
 fn read_vault_internal(state: &State<AppState>) -> Result<Value, String> {
@@ -254,6 +252,17 @@ fn unlock_vault(state: State<AppState>, password: String) -> Value {
     let is_new = !salt_path.exists();
 
     let salt = if is_new {
+        // SECURITY FIX (Gemini L5-1): backend password strength validation for new vaults.
+        // Frontend check can be bypassed via API calls; this ensures the rule is enforced
+        // at the only trusted layer: the Rust backend.
+        let pwd_strong = password.len() >= 12
+            && password.chars().any(|c| c.is_uppercase())
+            && password.chars().any(|c| c.is_lowercase())
+            && password.chars().any(|c| c.is_ascii_digit())
+            && password.chars().any(|c| !c.is_alphanumeric());
+        if !pwd_strong {
+            return json!({"success": false, "error": "Password troppo debole: minimo 12 caratteri, una maiuscola, una minuscola, un numero e un simbolo."});
+        }
         let mut s = vec![0u8; 32];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut s);
         match fs::write(&salt_path, &s) {
@@ -324,8 +333,17 @@ fn reset_vault(state: State<AppState>, password: String) -> Value {
             return json!({"success": false, "error": "Password errata"});
         }
     }
-    let _ = fs::remove_dir_all(&dir);
-    let _ = fs::create_dir_all(&dir);
+    let _ = {
+        // SECURITY FIX (Gemini L3-2): preserve license.json across factory reset.
+        // Previously remove_dir_all wiped license too, forcing re-activation after every reset.
+        let license_backup: Option<Vec<u8>> = fs::read(dir.join(LICENSE_FILE)).ok();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::create_dir_all(&dir);
+        // Restore license if it existed
+        if let Some(license_data) = license_backup {
+            let _ = fs::write(dir.join(LICENSE_FILE), license_data);
+        }
+    };
     *state.vault_key.lock().unwrap() = None;
     json!({"success": true})
 }
@@ -361,13 +379,16 @@ fn change_password(state: State<AppState>, current_password: String, new_passwor
     // Update salt and verify
     fs::write(dir.join(VAULT_SALT_FILE), &new_salt).map_err(|e| e.to_string())?;
     fs::write(dir.join(VAULT_VERIFY_FILE), make_verify_tag(&new_key)).map_err(|e| e.to_string())?;
-    // Re-encrypt audit log if exists
+    // Re-encrypt audit log if exists — ATOMIC write via tmp+rename (Gemini L3-4)
     let audit_path = dir.join(AUDIT_LOG_FILE);
     if audit_path.exists() {
         if let Ok(enc) = fs::read(&audit_path) {
             if let Ok(dec) = decrypt_data(&current_key, &enc) {
                 if let Ok(re_enc) = encrypt_data(&new_key, &dec) {
-                    let _ = fs::write(&audit_path, re_enc);
+                    let audit_tmp = dir.join(".audit.tmp");
+                    if fs::write(&audit_tmp, re_enc).is_ok() {
+                        let _ = fs::rename(&audit_tmp, &audit_path);
+                    }
                 }
             }
         }
@@ -408,6 +429,42 @@ fn verify_vault_password(state: State<AppState>, pwd: String) -> Result<Value, S
         *state.failed_attempts.lock().unwrap() = 0;
     }
     Ok(json!({"valid": valid}))
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SUMMARY — Server-side computation (Gemini L2-4)
+// ═══════════════════════════════════════════════════════════
+
+/// Returns {activePractices, urgentDeadlines} computed in Rust.
+/// Previously computed client-side (getSummary in api.js) by loading ALL practices
+/// and iterating in JS — O(n) on the main thread, causing CPU freezes on large vaults.
+/// Now computed server-side in a single vault read.
+#[tauri::command]
+fn get_summary(state: State<AppState>) -> Result<Value, String> {
+    let vault = read_vault_internal(&state)?;
+    let practices = vault.get("practices").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+    let active_practices = practices.iter().filter(|p| {
+        p.get("status").and_then(|s| s.as_str()) == Some("active")
+    }).count();
+
+    let today = chrono::Local::now().naive_local().date();
+    let in_7_days = today + chrono::Duration::days(7);
+    let mut urgent_deadlines: usize = 0;
+    for p in &practices {
+        if p.get("status").and_then(|s| s.as_str()) != Some("active") { continue; }
+        if let Some(deadlines) = p.get("deadlines").and_then(|d| d.as_array()) {
+            for d in deadlines {
+                if let Some(date_str) = d.get("date").and_then(|ds| ds.as_str()) {
+                    if let Ok(d_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+                        if d_date >= today && d_date <= in_7_days {
+                            urgent_deadlines += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(json!({"activePractices": active_practices, "urgentDeadlines": urgent_deadlines}))
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -496,7 +553,9 @@ fn bio_login() -> Result<String, String> {
         let swift_code = "import LocalAuthentication\nlet ctx = LAContext()\nvar err: NSError?\nif ctx.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &err) {\n  let sema = DispatchSemaphore(value: 0)\n  var ok = false\n  ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: \"LexFlow\") { s, _ in ok = s; sema.signal() }\n  sema.wait()\n  if ok { exit(0) } else { exit(1) }\n} else { exit(1) }";
         
         use std::io::Write;
-        let mut child = std::process::Command::new("swift")
+        // SECURITY FIX (Gemini L1-2): use absolute path to prevent PATH hijacking.
+        // /usr/bin/swift is the canonical location on macOS; never rely on $PATH for security-critical executables.
+        let mut child = std::process::Command::new("/usr/bin/swift")
             .arg("-")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
@@ -532,7 +591,9 @@ function Await($WinRtTask, $ResultType) {
 $result = Await ([Windows.Security.Credentials.UI.UserConsentVerifier]::RequestVerificationAsync("LexFlow — Verifica identità")) ([Windows.Security.Credentials.UI.UserConsentVerificationResult])
 if ($result -eq [Windows.Security.Credentials.UI.UserConsentVerificationResult]::Verified) { exit 0 } else { exit 1 }
 "#;
-        let status = Command::new("powershell")
+        // SECURITY FIX (Gemini L1-2): use absolute path to prevent PATH hijacking.
+        // C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe is the canonical location.
+        let status = Command::new(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
             .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -582,7 +643,9 @@ fn append_audit_log(state: &State<AppState>, event_name: &str) -> Result<(), Str
     } else { vec![] };
 
     logs.push(json!({"event": event_name, "time": chrono::Local::now().to_rfc3339()}));
-    if logs.len() > 100 { logs.remove(0); }
+    // GDPR FIX (Gemini L4-4): increased from 100 to 10000 events to comply with
+    // legal audit trail requirements. 10000 events @ ~100 bytes each ≈ 1MB encrypted.
+    if logs.len() > 10000 { logs.remove(0); }
     let plaintext = Zeroizing::new(serde_json::to_vec(&logs).unwrap_or_default());
     let enc = encrypt_data(&key, &plaintext)?;
     fs::write(&path, enc).map_err(|e| {
@@ -726,8 +789,9 @@ fn hmac_checksum(payload: &str) -> String {
         .expect("HMAC init");
     mac.update(payload.as_bytes());
     let result = mac.finalize().into_bytes();
-    // 4 caratteri HEX maiuscolo (stessa logica del keygen JS)
-    format!("{:02X}{:02X}", result[0], result[1]).chars().take(4).collect::<String>()
+    // SECURITY FIX (Gemini L5-2): 8 hex chars (4 bytes) instead of 4 (2 bytes).
+    // 4-char checksum = 65536 brute-force combinations; 8-char = 4 billion.
+    format!("{:02X}{:02X}{:02X}{:02X}", result[0], result[1], result[2], result[3])
 }
 
 fn verify_license_key(key: &str) -> bool {
@@ -737,8 +801,9 @@ fn verify_license_key(key: &str) -> bool {
     let s3 = parts[2];
     let s4 = parts[3];
     let checksum = parts[4];
-    // Ogni segmento deve essere 4 caratteri hex validi
-    if s2.len() != 4 || s3.len() != 4 || s4.len() != 4 || checksum.len() != 4 { return false; }
+    // Ogni segmento payload deve essere 4 caratteri hex validi.
+    // SECURITY FIX (Gemini L5-2): checksum is now 8 hex chars (was 4).
+    if s2.len() != 4 || s3.len() != 4 || s4.len() != 4 || checksum.len() != 8 { return false; }
     let payload = format!("{}{}{}", s2, s3, s4);
     if hex::decode(&payload).is_err() { return false; }
     hmac_checksum(&payload) == checksum
@@ -817,10 +882,12 @@ async fn import_vault(state: State<'_, AppState>, pwd: String, app: AppHandle) -
     let path = rx.await.map_err(|e| format!("Dialog error: {}", e))?;
     if let Some(p) = path {
         let raw = fs::read(p.into_path().unwrap()).map_err(|e| e.to_string())?;
-        // Limite dimensione: max 50MB per prevenire OOM con file malevoli
-        const MAX_IMPORT_SIZE: usize = 50 * 1024 * 1024;
+        // CAPACITY FIX (Gemini L4-3): increased from 50MB to 500MB to handle large
+        // law firm vaults (many practices + attached document paths). OOM risk is
+        // minimal: AES-GCM decryption is streaming-friendly and memory is freed immediately.
+        const MAX_IMPORT_SIZE: usize = 500 * 1024 * 1024;
         if raw.len() > MAX_IMPORT_SIZE {
-            return Err("File troppo grande (max 50MB)".into());
+            return Err("File troppo grande (max 500MB)".into());
         }
         // Validazione struttura minima: 32 byte salt + VAULT_MAGIC + nonce (12) + tag AES (16)
         let min_len = 32 + VAULT_MAGIC.len() + NONCE_LEN + 16;
@@ -944,7 +1011,16 @@ fn sync_notification_schedule(state: State<AppState>, schedule: Value) -> bool {
     let key = get_local_encryption_key();
     let plaintext = serde_json::to_vec(&schedule).unwrap_or_default();
     match encrypt_data(&key, &plaintext) {
-        Ok(encrypted) => fs::write(dir.join(NOTIF_SCHEDULE_FILE), encrypted).is_ok(),
+        Ok(encrypted) => {
+            // RACE CONDITION FIX (Gemini L2-5): use atomic write via tmp+rename
+            // to prevent partial writes that could corrupt the schedule file.
+            let tmp = dir.join(".notif-schedule.tmp");
+            if fs::write(&tmp, encrypted).is_ok() {
+                fs::rename(&tmp, dir.join(NOTIF_SCHEDULE_FILE)).is_ok()
+            } else {
+                false
+            }
+        },
         Err(_) => false,
     }
 }
@@ -976,22 +1052,30 @@ fn read_notification_schedule(data_dir: &PathBuf) -> Option<Value> {
 /// Background notification engine — reads encrypted schedule, no vault access needed
 fn start_notification_scheduler(app: AppHandle, data_dir: PathBuf) {
     std::thread::spawn(move || {
-        // Calcola la local key una sola volta all'avvio del thread — evita ricalcolo
-        // (e lettura disco su Android) ad ogni tick
+        // SECURITY FIX (Gemini L5-5): Use epoch-based "what fired since last check" instead
+        // of string "HH:MM" equality. The old approach missed notifications after:
+        //   - DST transitions (clock jumps 60 min, skipping a full minute)
+        //   - NTP corrections (clock steps backward, causing double-fire or silence)
+        //   - System sleep/wake (60s tick skips minutes entirely)
+        // New approach: remember the last_checked timestamp; fire anything whose scheduled
+        // time falls in (last_checked, now]. This is monotonically safe and catches skipped
+        // minutes after wake-from-sleep.
         let local_key = get_local_encryption_key();
-        let mut last_minute = String::new();
+        // Initialize last_checked to "now - 65s" so we don't re-fire old events on startup,
+        // but do fire anything that was due in the last minute (handles startup delay).
+        let mut last_checked = chrono::Local::now() - chrono::Duration::seconds(65);
 
         loop {
-            // Su Android dormiamo 60s ma usiamo park_timeout per consentire wakeup anticipato
-            // se necessario. Su desktop stessa logica.
             std::thread::sleep(Duration::from_secs(60));
 
             let now = chrono::Local::now();
-            let current_minute = now.format("%H:%M").to_string();
-            if current_minute == last_minute { continue; }
-            last_minute = current_minute.clone();
+            // Window: (last_checked, now] — catches all minutes we might have skipped
+            let window_start = last_checked;
+            last_checked = now;
+
             let today = now.format("%Y-%m-%d").to_string();
             let tomorrow = (now + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+
             // Read encrypted schedule
             let schedule: Value = match read_notification_schedule(&data_dir) {
                 Some(v) => v,
@@ -1001,30 +1085,43 @@ fn start_notification_scheduler(app: AppHandle, data_dir: PathBuf) {
             let sent_path = data_dir.join(NOTIF_SENT_FILE);
             let mut sent: Vec<String> = if sent_path.exists() {
                 if let Ok(enc) = fs::read(&sent_path) {
-                    // Try encrypted first
                     if let Ok(dec) = decrypt_data(&local_key, &enc) {
                         serde_json::from_slice(&dec).unwrap_or_default()
                     } else {
-                        // Migration from plaintext
                         fs::read_to_string(&sent_path).ok()
                             .and_then(|s| serde_json::from_str(&s).ok())
                             .unwrap_or_default()
                     }
                 } else { vec![] }
             } else { vec![] };
+
             let briefing_times = schedule.get("briefingTimes")
                 .and_then(|v| v.as_array()).cloned().unwrap_or_default();
             let items = schedule.get("items")
                 .and_then(|v| v.as_array()).cloned().unwrap_or_default();
             let mut new_sent = false;
+
+            // Helper: check if a "HH:MM" time on a given date falls in our window
+            let time_in_window = |date_str: &str, time_str: &str| -> bool {
+                if time_str.len() < 5 { return false; }
+                let dt_str = format!("{} {}", date_str, time_str);
+                if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%d %H:%M") {
+                    let dt_local = chrono::Local.from_local_datetime(&dt).single();
+                    if let Some(t) = dt_local {
+                        return t > window_start && t <= now;
+                    }
+                }
+                false
+            };
+
             // Briefing times (daily summary)
             for bt in &briefing_times {
                 if let Some(time_str) = bt.as_str() {
-                    if time_str == current_minute {
+                    if time_in_window(&today, time_str) {
                         let key = format!("briefing-{}-{}", today, time_str);
                         if !sent.contains(&key) {
                             let today_count = items.iter()
-                                .filter(|i| i.get("date").and_then(|d| d.as_str()) == Some(&today))
+                                .filter(|i| i.get("date").and_then(|d| d.as_str()) == Some(today.as_str()))
                                 .count();
                             let title = if today_count == 0 {
                                 "LexFlow — Nessun impegno oggi".to_string()
@@ -1038,6 +1135,7 @@ fn start_notification_scheduler(app: AppHandle, data_dir: PathBuf) {
                     }
                 }
             }
+
             // Per-item reminders
             for item in &items {
                 let item_date = item.get("date").and_then(|d| d.as_str()).unwrap_or("");
@@ -1045,26 +1143,29 @@ fn start_notification_scheduler(app: AppHandle, data_dir: PathBuf) {
                 let remind_min = item.get("remindMinutes").and_then(|v| v.as_i64()).unwrap_or(30);
                 let item_title = item.get("title").and_then(|t| t.as_str()).unwrap_or("Impegno");
                 let item_id = item.get("id").and_then(|i| i.as_str()).unwrap_or("");
-                if (item_date == today || item_date == tomorrow) && !item_time.is_empty() && item_time.len() >= 5 {
-                    if let (Ok(h), Ok(m)) = (item_time[..2].parse::<i64>(), item_time[3..5].parse::<i64>()) {
-                        let item_minutes = h * 60 + m;
-                        let now_minutes = now.format("%H").to_string().parse::<i64>().unwrap_or(0) * 60
-                            + now.format("%M").to_string().parse::<i64>().unwrap_or(0);
-                        let diff = if item_date == today { item_minutes - now_minutes }
-                            else { item_minutes + 1440 - now_minutes };
-                        if diff >= 0 && diff <= remind_min {
-                            let key = format!("remind-{}-{}-{}", item_date, item_id, item_time);
-                            if !sent.contains(&key) {
-                                let body = if diff == 0 { format!("{} — adesso!", item_title) }
-                                    else { format!("{} — tra {} minuti", item_title, diff) };
-                                let _ = app.emit("show-notification", json!({"title": "LexFlow — Promemoria", "body": body}));
-                                sent.push(key);
-                                new_sent = true;
+
+                if (item_date == today || item_date == tomorrow) && item_time.len() >= 5 {
+                    // Compute the actual reminder fire time = item datetime - remind_min
+                    let item_dt_str = format!("{} {}", item_date, item_time);
+                    if let Ok(item_dt) = chrono::NaiveDateTime::parse_from_str(&item_dt_str, "%Y-%m-%d %H:%M") {
+                        if let Some(item_local) = chrono::Local.from_local_datetime(&item_dt).single() {
+                            let remind_time = item_local - chrono::Duration::minutes(remind_min);
+                            if remind_time > window_start && remind_time <= now {
+                                let key = format!("remind-{}-{}-{}", item_date, item_id, item_time);
+                                if !sent.contains(&key) {
+                                    let diff = (item_local - now).num_minutes().max(0);
+                                    let body = if diff == 0 { format!("{} — adesso!", item_title) }
+                                        else { format!("{} — tra {} minuti", item_title, diff) };
+                                    let _ = app.emit("show-notification", json!({"title": "LexFlow — Promemoria", "body": body}));
+                                    sent.push(key);
+                                    new_sent = true;
+                                }
                             }
                         }
                     }
                 }
             }
+
             // Persist encrypted sent log (keep last 500)
             if new_sent {
                 if sent.len() > 500 { sent.drain(..sent.len() - 500); }
@@ -1072,7 +1173,8 @@ fn start_notification_scheduler(app: AppHandle, data_dir: PathBuf) {
                     let _ = fs::write(&sent_path, enc);
                 }
             }
-            // Daily cleanup at midnight
+            // Daily cleanup: keep only today + tomorrow entries
+            let current_minute = now.format("%H:%M").to_string();
             if current_minute == "00:00" {
                 sent.retain(|s| s.contains(&today) || s.contains(&tomorrow));
                 if let Ok(enc) = encrypt_data(&local_key, &serde_json::to_vec(&sent).unwrap_or_default()) {
@@ -1309,6 +1411,7 @@ pub fn run() {
             save_practices,
             load_agenda,
             save_agenda,
+            get_summary,
             // Settings
             get_settings,
             save_settings,

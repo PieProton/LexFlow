@@ -41,10 +41,10 @@ jobs:
           cache-on-failure: true
 
       - name: Install root deps
-        run: npm ci --legacy-peer-deps
+        run: npm ci
 
       - name: Install frontend deps
-        run: cd client && npm ci --legacy-peer-deps
+        run: cd client && npm ci
 
       - name: Build Windows
         run: npx @tauri-apps/cli build --target x86_64-pc-windows-msvc --bundles nsis

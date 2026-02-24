@@ -11,10 +11,12 @@ function safeInvoke(cmd, args = {}) {
 }
 
 function toBytes(arrayBuffer) {
-  if (!arrayBuffer) return [];
-  // Usa Uint8Array direttamente — Array.from su file grandi (>10MB) causa OOM su Android
-  // Tauri v2 accetta Uint8Array nei parametri, convertendolo automaticamente in Vec<u8>
-  return [...new Uint8Array(arrayBuffer)];
+  if (!arrayBuffer) return new Uint8Array(0);
+  // PERF FIX (Gemini L3-3): return Uint8Array directly instead of spreading into Array.
+  // The spread operator [...new Uint8Array(buf)] allocates a full JS Array copy — on files
+  // >10MB this causes OOM on Android (2× memory: one Uint8Array + one Array of numbers).
+  // Tauri v2 accepts Uint8Array natively in command parameters (serialized as Vec<u8>).
+  return new Uint8Array(arrayBuffer);
 }
 
 window.api = {
@@ -42,6 +44,8 @@ window.api = {
   savePractices: (list) => safeInvoke('save_practices', { list }),
   loadAgenda: () => safeInvoke('load_agenda'),
   saveAgenda: (agenda) => safeInvoke('save_agenda', { agenda }),
+  // PERF FIX (Gemini L2-4): server-side summary computation — no more full client-side iteration
+  getSummary: () => safeInvoke('get_summary'),
 
   // Settings
   getSettings: () => safeInvoke('get_settings'),

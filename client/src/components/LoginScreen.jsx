@@ -129,6 +129,13 @@ export default function LoginScreen({ onUnlock }) {
       const result = await window.api.unlockVault(password);
       
       if (result.success) {
+        // SECURITY FIX (Gemini L1-3): clear password from React state immediately after use.
+        // JS GC does not zero memory on collection, but at least the reference is removed
+        // so the GC can collect it. The field is also cleared to prevent it persisting in
+        // the virtual DOM tree longer than necessary.
+        setPassword('');
+        setConfirm('');
+
         if (result.isNew && bioAvailable && !bioSaved) {
           const consent = window.confirm("Vuoi abilitare l'accesso biometrico (Face ID / Touch ID / impronta) per accedere più velocemente?");
           if (consent) {
@@ -167,13 +174,22 @@ export default function LoginScreen({ onUnlock }) {
       }
       throw new Error("Password non valida");
     } catch (err) {
-      console.warn("Login bio fallito:", err);
+      const errMsg = err?.message || String(err);
+      // ANDROID FIX (Gemini L3-1): "android-bio-use-frontend" is NOT a real error —
+      // it means the Rust layer correctly deferred to the JS biometric flow.
+      // On Android, BiometricPrompt is managed in JS; Rust just signals the handoff.
+      // Show a clean fallback to password without alarming the user.
+      const isAndroidHandoff = errMsg.includes('android-bio-use-frontend');
+      console.warn("Login bio fallito:", isAndroidHandoff ? "(Android handoff — expected)" : err);
       setBioFailed(prev => prev + 1);
       
       // Se fallisce troppe volte, forza l'uso della password
       if (bioFailed + 1 >= MAX_BIO_ATTEMPTS) {
         setShowPasswordField(true);
         if (!isAutomatic) setError('Troppi tentativi falliti. Usa la password.');
+      } else if (isAndroidHandoff) {
+        // Android handoff: show password field silently, no scary error
+        setShowPasswordField(true);
       } else if (!isAutomatic) {
         setError('Riconoscimento fallito o annullato.');
       } else {
