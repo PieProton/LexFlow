@@ -59,10 +59,16 @@ keyring = { version = "3", features = [] }
 [profile.release]
 panic = "abort"
 codegen-units = 1
-lto = "fat"
+lto = "thin"
 opt-level = 3
-strip = "symbols"
+strip = true
 
-# Android release: strip aggressivo per APK compatti
-[profile.release.package."*"]
+# Android-only: profilo separato per APK compatti
+# Su desktop questo blocco non viene usato (target != android)
+# NON usare [profile.release.package."*"] globale — override anche le dipendenze crypto
+[profile.release-android]
+inherits = "release"
+lto = "thin"
 opt-level = "s"
+strip = true
+codegen-units = 4

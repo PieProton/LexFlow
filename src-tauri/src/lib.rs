@@ -63,9 +63,14 @@ fn get_local_encryption_key() -> Vec<u8> {
     {
         let user = whoami::username();
         let host = whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string());
-        let seed = format!("LEXFLOW-LOCAL-KEY:{}:{}:FORTKNOX", user, host);
-        let hash = <Sha256 as Digest>::digest(seed.as_bytes());
-        hash.to_vec()
+        // Aggiungiamo l'UID del processo come secondo fattore di entropia —
+        // due macchine con stesso username+hostname ma UID diversi producono chiavi diverse.
+        let uid = std::env::var("UID").unwrap_or_else(|_| "0".to_string());
+        let seed = format!("LEXFLOW-LOCAL-KEY-V2:{}:{}:{}:FORTKNOX", user, host, uid);
+        // Double-hash per evitare length-extension attacks
+        let h1 = <Sha256 as Digest>::digest(seed.as_bytes());
+        let h2 = <Sha256 as Digest>::digest(&h1);
+        h2.to_vec()
     }
     #[cfg(target_os = "android")]
     {
@@ -81,8 +86,9 @@ fn get_local_encryption_key() -> Vec<u8> {
             let candidate_dirs = [
                 // Path risolto da Tauri app_data_dir() (post-setup)
                 dirs::data_dir().map(|d| d.join("com.pietrolongo.lexflow")),
-                // Fallback Android classico
-                Some(std::path::PathBuf::from("/data/data/com.pietrolongo.lexflow/files")),
+                // NON usiamo path hardcoded /data/data/... — varia per utente/multi-user Android
+                // Fallback: directory temporanea che esiste sempre
+                std::env::temp_dir().parent().map(|p| p.join("com.pietrolongo.lexflow")),
             ];
             let mut found_id: Option<String> = None;
             let mut first_writable: Option<std::path::PathBuf> = None;
@@ -217,7 +223,9 @@ fn read_vault_internal(state: &State<AppState>) -> Result<Value, String> {
 fn write_vault_internal(state: &State<AppState>, data: &Value) -> Result<(), String> {
     let key = get_vault_key(state)?;
     let dir = state.data_dir.lock().unwrap().clone();
-    let encrypted = encrypt_data(&key, &serde_json::to_vec(data).unwrap())?;
+    // Zeroizing: i byte del plaintext vengono azzerati quando `plaintext` esce dallo scope
+    let plaintext = Zeroizing::new(serde_json::to_vec(data).map_err(|e| e.to_string())?);
+    let encrypted = encrypt_data(&key, &plaintext)?;
     let tmp = dir.join(".vault.tmp");
     fs::write(&tmp, encrypted).map_err(|e| e.to_string())?;
     fs::rename(tmp, dir.join(VAULT_FILE)).map_err(|e| e.to_string())?;
@@ -248,8 +256,10 @@ fn unlock_vault(state: State<AppState>, password: String) -> Value {
     let salt = if is_new {
         let mut s = vec![0u8; 32];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut s);
-        fs::write(&salt_path, &s).unwrap();
-        s
+        match fs::write(&salt_path, &s) {
+            Ok(_) => s,
+            Err(e) => return json!({"success": false, "error": format!("Errore scrittura vault: {}", e)}),
+        }
     } else {
         fs::read(&salt_path).unwrap_or_default()
     };
@@ -271,7 +281,10 @@ fn unlock_vault(state: State<AppState>, password: String) -> Value {
                 *state.vault_key.lock().unwrap() = Some(SecureKey(k));
             } else {
                 let tag = make_verify_tag(&k);
-                fs::write(&verify_path, tag).unwrap();
+                match fs::write(&verify_path, tag) {
+                    Ok(_) => {},
+                    Err(e) => return json!({"success": false, "error": format!("Errore init vault: {}", e)}),
+                }
                 // Assegna la chiave PRIMA di scrivere il vault iniziale — write_vault_internal
                 // la legge dallo state. Nessun .clone() → nessuna copia non-zeroizzata in memoria.
                 *state.vault_key.lock().unwrap() = Some(SecureKey(k));
@@ -339,8 +352,9 @@ fn change_password(state: State<AppState>, current_password: String, new_passwor
     let mut new_salt = vec![0u8; ARGON2_SALT_LEN];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut new_salt);
     let new_key = derive_secure_key(&new_password, &new_salt)?;
-    // Re-encrypt vault
-    let encrypted = encrypt_data(&new_key, &serde_json::to_vec(&vault_data).unwrap())?;
+    // Re-encrypt vault con la nuova chiave — plaintext zeroizzato dopo l'uso
+    let vault_plaintext = Zeroizing::new(serde_json::to_vec(&vault_data).map_err(|e| e.to_string())?);
+    let encrypted = encrypt_data(&new_key, &vault_plaintext)?;
     let tmp = dir.join(".vault.tmp");
     fs::write(&tmp, &encrypted).map_err(|e| e.to_string())?;
     fs::rename(&tmp, &vault_path).map_err(|e| e.to_string())?;
@@ -569,8 +583,12 @@ fn append_audit_log(state: &State<AppState>, event_name: &str) -> Result<(), Str
 
     logs.push(json!({"event": event_name, "time": chrono::Local::now().to_rfc3339()}));
     if logs.len() > 100 { logs.remove(0); }
-    let enc = encrypt_data(&key, &serde_json::to_vec(&logs).unwrap())?;
-    let _ = fs::write(path, enc);
+    let plaintext = Zeroizing::new(serde_json::to_vec(&logs).unwrap_or_default());
+    let enc = encrypt_data(&key, &plaintext)?;
+    fs::write(&path, enc).map_err(|e| {
+        eprintln!("[LexFlow] AUDIT LOG WRITE FAILED: {} — event '{}' lost", e, event_name);
+        e.to_string()
+    })?;
     Ok(())
 }
 
@@ -654,11 +672,11 @@ fn check_license(state: State<AppState>) -> Value {
             if let Ok(activated_time) = chrono::DateTime::parse_from_rfc3339(activated_str) {
                 let now = chrono::Utc::now();
                 let elapsed = now.signed_duration_since(activated_time);
-                if elapsed > chrono::Duration::hours(24) {
+                if elapsed > chrono::Duration::days(365) {
                     let _ = fs::remove_file(&path);
-                    return json!({"activated": false, "expired": true, "reason": "Chiave scaduta (24h). Inserisci una nuova chiave."});
+                    return json!({"activated": false, "expired": true, "reason": "Chiave scaduta (1 anno). Inserisci una nuova chiave."});
                 }
-                let remaining_secs = (chrono::Duration::hours(24) - elapsed).num_seconds().max(0);
+                let remaining_secs = (chrono::Duration::days(365) - elapsed).num_seconds().max(0);
                 return json!({
                     "activated": true,
                     "key": license_key,
@@ -770,7 +788,9 @@ async fn export_vault(state: State<'_, AppState>, pwd: String, app: AppHandle) -
     let data = read_vault_internal(&state)?;
     let salt = (0..32).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
     let key = derive_secure_key(&pwd, &salt)?;
-    let encrypted = encrypt_data(&key, &serde_json::to_vec(&data).unwrap())?;
+    // Zeroizing: plaintext vault azzerato dopo la cifratura
+    let plaintext = Zeroizing::new(serde_json::to_vec(&data).map_err(|e| e.to_string())?);
+    let encrypted = encrypt_data(&key, &plaintext)?;
     let mut out = salt; out.extend(encrypted);
 
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -797,6 +817,11 @@ async fn import_vault(state: State<'_, AppState>, pwd: String, app: AppHandle) -
     let path = rx.await.map_err(|e| format!("Dialog error: {}", e))?;
     if let Some(p) = path {
         let raw = fs::read(p.into_path().unwrap()).map_err(|e| e.to_string())?;
+        // Limite dimensione: max 50MB per prevenire OOM con file malevoli
+        const MAX_IMPORT_SIZE: usize = 50 * 1024 * 1024;
+        if raw.len() > MAX_IMPORT_SIZE {
+            return Err("File troppo grande (max 50MB)".into());
+        }
         // Validazione struttura minima: 32 byte salt + VAULT_MAGIC + nonce (12) + tag AES (16)
         let min_len = 32 + VAULT_MAGIC.len() + NONCE_LEN + 16;
         if raw.len() < min_len {

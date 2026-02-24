@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "LexFlow",
-  "version": "2.3.18",
+  "version": "2.3.24",
   "identifier": "com.pietrolongo.lexflow",
   "build": {
     "frontendDist": "../client/dist",
@@ -31,7 +31,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+      "csp": "default-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data: blob:; style-src 'self' 'nonce-{nonce}'; font-src 'self' data:"
     }
   },
   "bundle": {
@@ -65,12 +65,5 @@
       }
     }
   },
-  "plugins": {
-    "notification": {
-      "android": {
-        "channelId": "lexflow-alerts",
-        "channelDescription": "LexFlow — Promemoria e scadenze"
-      }
-    }
-  }
+  "plugins": {}
 }
