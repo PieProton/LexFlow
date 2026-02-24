@@ -11,8 +11,10 @@ rustflags = [
 
 [target.x86_64-pc-windows-msvc]
 # lld-link per cross-compile Windows da macOS via cargo-xwin
-# I LIBPATH delle Windows SDK vengono passati via env LIB in build-all.sh
 linker = "lld-link"
 rustflags = [
     "-C", "linker-flavor=msvc",
+    "-C", "link-arg=/LIBPATH:/Users/pietrolongo/Library/Caches/cargo-xwin/xwin/sdk/lib/um/x86_64",
+    "-C", "link-arg=/LIBPATH:/Users/pietrolongo/Library/Caches/cargo-xwin/xwin/sdk/lib/ucrt/x86_64",
+    "-C", "link-arg=/LIBPATH:/Users/pietrolongo/Library/Caches/cargo-xwin/xwin/crt/lib/x86_64",
 ]
