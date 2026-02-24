@@ -16,7 +16,7 @@ tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
 # Core & Serialization
-tauri = { version = "2.1.0", features = ["tray-icon", "macos-private-api"] }
+tauri = { version = "2.1.0", features = ["tray-icon"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
@@ -51,6 +51,13 @@ zeroize = { version = "1.7", features = ["derive", "alloc"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 open = "5"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
+
+# Fix: macOS 26 Tahoe crash — objc2 'relax-sign-encoding' previene
+# panic_cannot_unwind in tao::did_finish_launching (tao#1171).
+# Apple cambiò i return type di alcuni metodi ObjC da 'q'(Int64) a 'Q'(UInt64);
+# objc2 strict validation panics dentro extern-C callbacks → abort().
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2 = { version = "0.6", features = ["relax-sign-encoding"] }
 
 # Android: keystore sicuro nativo via android_keystore
 [target.'cfg(target_os = "android")'.dependencies]

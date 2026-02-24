@@ -2269,6 +2269,7 @@ dependencies = [
  "hmac",
  "image",
  "keyring",
+ "objc2",
  "open",
  "rand 0.8.5",
  "serde",

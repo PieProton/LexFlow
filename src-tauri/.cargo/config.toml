@@ -10,7 +10,9 @@ rustflags = [
 ]
 
 [target.x86_64-pc-windows-msvc]
-# cargo-xwin gestisce il download automatico delle Windows SDK libs e wrappa lld-link
-linker = "rust-lld"
-runner = "cargo xwin"
-rustflags = ["-C", "linker-flavor=msvc", "-C", "link-arg=-fuse-ld=lld"]
+# lld-link per cross-compile Windows da macOS via cargo-xwin
+# I LIBPATH delle Windows SDK vengono passati via env LIB in build-all.sh
+linker = "lld-link"
+rustflags = [
+    "-C", "linker-flavor=msvc",
+]
