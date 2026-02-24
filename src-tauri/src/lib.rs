@@ -26,6 +26,10 @@ const SETTINGS_FILE: &str = "settings.json";
 const AUDIT_LOG_FILE: &str = "vault.audit";
 const NOTIF_SCHEDULE_FILE: &str = "notification-schedule.json";
 const NOTIF_SENT_FILE: &str = "notification-sent.json";
+// NOTIFICATION FIX (Level-9): persisted scheduler checkpoint — survives app restart/power-off.
+// On startup the scheduler reads this file to know "where it left off" and fires any missed
+// events immediately (e.g. an 8:00 reminder if the PC was powered on at 8:15).
+const NOTIF_LAST_CHECKED_FILE: &str = ".notif-last-checked";
 const LICENSE_FILE: &str = "license.json";
 // SECURITY: persisted brute-force state — survives app restart/kill (L7 fix #1)
 const LOCKOUT_FILE: &str = ".lockout";
@@ -452,6 +456,11 @@ fn reset_vault(state: State<AppState>, password: String) -> Value {
         };
         let stored = fs::read(dir.join(VAULT_VERIFY_FILE)).unwrap_or_default();
         if !verify_hash_matches(&key, &stored) {
+            // SECURITY FIX (Level-9): zero password on wrong-password path too.
+            unsafe {
+                let ptr = password.as_ptr() as *mut u8;
+                for i in 0..password.len() { ptr.add(i).write_volatile(0); }
+            }
             return json!({"success": false, "error": "Password errata"});
         }
     }
@@ -483,6 +492,11 @@ fn reset_vault(state: State<AppState>, password: String) -> Value {
         }
     };
     *state.vault_key.lock().unwrap() = None;
+    // SECURITY FIX (Level-9): zero the password String bytes in RAM after use.
+    unsafe {
+        let ptr = password.as_ptr() as *mut u8;
+        for i in 0..password.len() { ptr.add(i).write_volatile(0); }
+    }
     json!({"success": true})
 }
 
@@ -574,6 +588,13 @@ fn change_password(state: State<AppState>, current_password: String, new_passwor
         }
     }
     let _ = append_audit_log(&state, "Password cambiata");
+    // SECURITY FIX (Level-9): zero both password strings from RAM after use.
+    unsafe {
+        let ptr = current_password.as_ptr() as *mut u8;
+        for i in 0..current_password.len() { ptr.add(i).write_volatile(0); }
+        let ptr2 = new_password.as_ptr() as *mut u8;
+        for i in 0..new_password.len() { ptr2.add(i).write_volatile(0); }
+    }
     Ok(json!({"success": true}))
 }
 
@@ -1172,6 +1193,11 @@ async fn import_vault(state: State<'_, AppState>, pwd: String, app: AppHandle) -
         }
         write_vault_internal(&state, &val)?;
         let _ = append_audit_log(&state, "Vault importato da backup");
+        // SECURITY FIX (Level-9): zero the backup password from RAM after the key is derived.
+        unsafe {
+            let ptr = pwd.as_ptr() as *mut u8;
+            for i in 0..pwd.len() { ptr.add(i).write_volatile(0); }
+        }
         Ok(json!({"success": true}))
     } else { Ok(json!({"success": false, "cancelled": true})) }
 }
@@ -1330,10 +1356,31 @@ fn start_notification_scheduler(app: AppHandle, data_dir: PathBuf) {
         // New approach: remember the last_checked timestamp; fire anything whose scheduled
         // time falls in (last_checked, now]. This is monotonically safe and catches skipped
         // minutes after wake-from-sleep.
+        //
+        // NOTIFICATION FIX (Level-9): persist last_checked to disk so missed events are
+        // recovered when the app is restarted or the PC is powered back on.
+        // e.g. 8:00 reminder scheduled, PC powered on at 8:15 → fires immediately on startup.
+        // Cap the catchup window to 24h to avoid spamming old events after a long absence.
         let local_key = get_local_encryption_key();
-        // Initialize last_checked to "now - 65s" so we don't re-fire old events on startup,
-        // but do fire anything that was due in the last minute (handles startup delay).
-        let mut last_checked = chrono::Local::now() - chrono::Duration::seconds(65);
+        let last_checked_path = data_dir.join(NOTIF_LAST_CHECKED_FILE);
+
+        // Load persisted last_checked from disk; fall back to now-65s (normal startup behaviour)
+        let mut last_checked: chrono::DateTime<chrono::Local> = {
+            let from_disk = fs::read_to_string(&last_checked_path)
+                .ok()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s.trim()).ok())
+                .map(|dt| dt.with_timezone(&chrono::Local));
+            match from_disk {
+                Some(persisted) => {
+                    // Cap catchup to 24h — avoids spamming week-old events after a long vacation
+                    let cap = chrono::Local::now() - chrono::Duration::hours(24);
+                    if persisted < cap { cap } else { persisted }
+                },
+                None => chrono::Local::now() - chrono::Duration::seconds(65),
+            }
+        };
+        // Persist the startup value immediately so a crash loop doesn't replay events forever
+        let _ = fs::write(&last_checked_path, last_checked.to_rfc3339());
 
         loop {
             std::thread::sleep(Duration::from_secs(60));
@@ -1342,6 +1389,8 @@ fn start_notification_scheduler(app: AppHandle, data_dir: PathBuf) {
             // Window: (last_checked, now] — catches all minutes we might have skipped
             let window_start = last_checked;
             last_checked = now;
+            // Persist so next startup knows where we got to
+            let _ = fs::write(&last_checked_path, now.to_rfc3339());
 
             let today = now.format("%Y-%m-%d").to_string();
             let tomorrow = (now + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
