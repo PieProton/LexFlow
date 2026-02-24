@@ -39,7 +39,7 @@
     "targets": [
       "app",
       "dmg",
-      "nsis"
+      "msi"
     ],
     "icon": [
       "icons/32x32.png",
@@ -56,12 +56,9 @@
       "webviewInstallMode": {
         "type": "offlineInstaller"
       },
-      "nsis": {
-        "displayLanguageSelector": false,
-        "languages": [
-          "Italian"
-        ],
-        "installMode": "currentUser"
+      "wix": {
+        "language": "it-IT",
+        "upgradeCode": "8166B188-49AA-4B0E-BAE7-31D8DA09BA84"
       }
     }
   },

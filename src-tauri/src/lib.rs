@@ -34,6 +34,7 @@ const LICENSE_FILE: &str = "license.json";
 // SECURITY: persisted brute-force state — survives app restart/kill (L7 fix #1)
 const LOCKOUT_FILE: &str = ".lockout";
 
+#[allow(dead_code)]
 const BIO_SERVICE: &str = "LexFlow_Bio";
 
 const VAULT_MAGIC: &[u8] = b"LEXFLOW_V2_SECURE";
