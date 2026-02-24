@@ -23,6 +23,9 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.env.android
+*.keystore
+*.jks
 
 # Editor / IDE
 .vscode/
