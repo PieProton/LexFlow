@@ -17,8 +17,11 @@ fn main() {
 #[cfg(target_os = "windows")]
 fn is_webview2_installed() -> bool {
     use std::process::Command;
-    // Check via registry — WebView2 stores its version in this key
-    let output = Command::new("reg")
+    // SECURITY FIX (L7 #5): use absolute path to prevent PATH hijacking.
+    // A malicious reg.exe or reg.bat in the app's working directory or $PATH
+    // would otherwise be executed with the app's privileges.
+    let reg = r"C:\Windows\System32\reg.exe";
+    let output = Command::new(reg)
         .args([
             "query",
             r"HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEB-235B8D6E5B40}",
@@ -28,13 +31,12 @@ fn is_webview2_installed() -> bool {
         .output();
     if let Ok(out) = output {
         let stdout = String::from_utf8_lossy(&out.stdout);
-        // If "pv" exists and is not empty/0.0.0.0, WebView2 is installed
         if out.status.success() && !stdout.contains("0.0.0.0") {
             return true;
         }
     }
     // Also check per-user install
-    let output2 = Command::new("reg")
+    let output2 = Command::new(reg)
         .args([
             "query",
             r"HKCU\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEB-235B8D6E5B40}",

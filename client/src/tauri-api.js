@@ -63,7 +63,7 @@ window.api = {
 
   // Licensing
   checkLicense: () => safeInvoke('check_license'),
-  activateLicense: (key) => safeInvoke('activate_license', { key }),
+  activateLicense: (key, clientName) => safeInvoke('activate_license', { key, clientName: clientName || null }),
 
   // Platform / App
   isMac: () => safeInvoke('is_mac'),
@@ -97,6 +97,13 @@ window.api = {
   onVaultLocked: (cb) => {
     if (!listen) return () => {};
     const unlistenPromise = listen('lf-vault-locked', () => cb()).catch(() => null);
+    return () => { unlistenPromise.then(fn => fn && fn()); };
+  },
+  // RACE FIX (L7 #5): warning event fires 30s before autolock so the frontend
+  // can auto-save any open form and show a "Sessione in scadenza" notice.
+  onVaultWarning: (cb) => {
+    if (!listen) return () => {};
+    const unlistenPromise = listen('lf-vault-warning', () => cb()).catch(() => null);
     return () => { unlistenPromise.then(fn => fn && fn()); };
   },
 };

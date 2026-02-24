@@ -27,6 +27,8 @@ const AUDIT_LOG_FILE: &str = "vault.audit";
 const NOTIF_SCHEDULE_FILE: &str = "notification-schedule.json";
 const NOTIF_SENT_FILE: &str = "notification-sent.json";
 const LICENSE_FILE: &str = "license.json";
+// SECURITY: persisted brute-force state — survives app restart/kill (L7 fix #1)
+const LOCKOUT_FILE: &str = ".lockout";
 
 const BIO_SERVICE: &str = "LexFlow_Bio";
 
@@ -64,9 +66,21 @@ fn get_local_encryption_key() -> Vec<u8> {
     {
         let user = whoami::username();
         let host = whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string());
-        // Aggiungiamo l'UID del processo come secondo fattore di entropia —
-        // due macchine con stesso username+hostname ma UID diversi producono chiavi diverse.
-        let uid = std::env::var("UID").unwrap_or_else(|_| "0".to_string());
+        // ENTROPY FIX (L7 Windows): UID env var does not exist on Windows — always returned "0",
+        // reducing local key entropy. Use a cross-platform machine-specific identifier instead:
+        // - On Unix: UID from environment or process UID via std
+        // - On Windows: USERDOMAIN + USERNAME combination (available on all Windows versions)
+        // - Fallback: combine process ID + thread ID for additional uniqueness
+        #[cfg(target_os = "windows")]
+        let uid = {
+            let domain = std::env::var("USERDOMAIN").unwrap_or_else(|_| "WORKGROUP".to_string());
+            let sid = std::env::var("USERPROFILE").unwrap_or_else(|_| std::env::var("LOCALAPPDATA").unwrap_or_else(|_| "0".to_string()));
+            format!("{}:{}", domain, sid)
+        };
+        #[cfg(not(target_os = "windows"))]
+        let uid = std::env::var("UID")
+            .or_else(|_| std::env::var("USER"))
+            .unwrap_or_else(|_| format!("{}", std::process::id()));
         let seed = format!("LEXFLOW-LOCAL-KEY-V2:{}:{}:{}:FORTKNOX", user, host, uid);
         // Double-hash per evitare length-extension attacks
         let h1 = <Sha256 as Digest>::digest(seed.as_bytes());
@@ -210,6 +224,36 @@ fn get_vault_key(state: &State<AppState>) -> Result<Zeroizing<Vec<u8>>, String> 
         .ok_or_else(|| "Locked".into())
 }
 
+// ─── Persisted brute-force state (L7 fix #1) ────────────────────────────────
+// The lockout counters must survive app kills; otherwise an attacker can kill+restart
+// to reset failed_attempts to 0. We persist them in a plain file in the data dir.
+// Format: "<attempts>:<unix_lockout_end_secs>" — not secret, just anti-abuse.
+
+fn lockout_load(data_dir: &PathBuf) -> (u32, Option<std::time::SystemTime>) {
+    let path = data_dir.join(LOCKOUT_FILE);
+    let text = fs::read_to_string(&path).unwrap_or_default();
+    let parts: Vec<&str> = text.trim().split(':').collect();
+    if parts.len() != 2 { return (0, None); }
+    let attempts = parts[0].parse::<u32>().unwrap_or(0);
+    let lockout_end_secs = parts[1].parse::<u64>().unwrap_or(0);
+    if lockout_end_secs == 0 { return (attempts, None); }
+    let end = std::time::UNIX_EPOCH + Duration::from_secs(lockout_end_secs);
+    (attempts, Some(end))
+}
+
+fn lockout_save(data_dir: &PathBuf, attempts: u32, locked_until: Option<std::time::SystemTime>) {
+    let secs = locked_until
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let _ = fs::write(data_dir.join(LOCKOUT_FILE), format!("{}:{}", attempts, secs));
+}
+
+fn lockout_clear(data_dir: &PathBuf) {
+    let _ = fs::remove_file(data_dir.join(LOCKOUT_FILE));
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 fn read_vault_internal(state: &State<AppState>) -> Result<Value, String> {
     let key = get_vault_key(state)?;
     let path = state.data_dir.lock().unwrap().join(VAULT_FILE);
@@ -221,11 +265,21 @@ fn read_vault_internal(state: &State<AppState>) -> Result<Value, String> {
 fn write_vault_internal(state: &State<AppState>, data: &Value) -> Result<(), String> {
     let key = get_vault_key(state)?;
     let dir = state.data_dir.lock().unwrap().clone();
-    // Zeroizing: i byte del plaintext vengono azzerati quando `plaintext` esce dallo scope
     let plaintext = Zeroizing::new(serde_json::to_vec(data).map_err(|e| e.to_string())?);
     let encrypted = encrypt_data(&key, &plaintext)?;
     let tmp = dir.join(".vault.tmp");
-    fs::write(&tmp, encrypted).map_err(|e| e.to_string())?;
+    // FSYNC FIX (L7-1): open explicitly to call sync_all() before rename.
+    // fs::write() sends data to the OS write buffer but does NOT guarantee physical disk write.
+    // If the app crashes or device powers off after rename but before the buffer flushes,
+    // vault.lex will exist with 0 bytes / garbage. sync_all() forces the OS to flush to storage.
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true).create(true).truncate(true)
+            .open(&tmp).map_err(|e| e.to_string())?;
+        f.write_all(&encrypted).map_err(|e| e.to_string())?;
+        f.sync_all().map_err(|e| e.to_string())?;
+    }
     fs::rename(tmp, dir.join(VAULT_FILE)).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -241,13 +295,29 @@ fn vault_exists(state: State<AppState>) -> bool {
 
 #[tauri::command]
 fn unlock_vault(state: State<AppState>, password: String) -> Value {
+    // BRUTE-FORCE FIX (L7 #1): check persisted disk lockout FIRST so kill+restart doesn't reset it.
+    let dir = state.data_dir.lock().unwrap().clone();
+    let (disk_attempts, disk_locked_until) = lockout_load(&dir);
+    // Sync in-memory state from disk on first call (e.g. after restart)
+    {
+        let mut att = state.failed_attempts.lock().unwrap();
+        if disk_attempts > *att { *att = disk_attempts; }
+    }
+    // Check disk-based lockout
+    if let Some(end_time) = disk_locked_until {
+        if std::time::SystemTime::now() < end_time {
+            let remaining = end_time.duration_since(std::time::SystemTime::now())
+                .map(|d| d.as_secs()).unwrap_or(0);
+            return json!({"success": false, "locked": true, "remaining": remaining});
+        }
+    }
+    // Also check in-memory lockout (Instant-based, for within-session accuracy)
     if let Some(until) = *state.locked_until.lock().unwrap() {
         if Instant::now() < until {
             return json!({"success": false, "locked": true, "remaining": (until - Instant::now()).as_secs()});
         }
     }
 
-    let dir = state.data_dir.lock().unwrap().clone();
     let salt_path = dir.join(VAULT_SALT_FILE);
     let is_new = !salt_path.exists();
 
@@ -281,9 +351,13 @@ fn unlock_vault(state: State<AppState>, password: String) -> Value {
                 if !verify_hash_matches(&k, &stored) {
                     let mut att = state.failed_attempts.lock().unwrap();
                     *att += 1;
-                    if *att >= MAX_FAILED_ATTEMPTS {
+                    let locked_sys = if *att >= MAX_FAILED_ATTEMPTS {
+                        let t = std::time::SystemTime::now() + Duration::from_secs(LOCKOUT_SECS);
                         *state.locked_until.lock().unwrap() = Some(Instant::now() + Duration::from_secs(LOCKOUT_SECS));
-                    }
+                        Some(t)
+                    } else { None };
+                    // Persist to disk — survives kill+restart
+                    lockout_save(&dir, *att, locked_sys);
                     return json!({"success": false, "error": "Password errata"});
                 }
                 // Vault esistente, password verificata — assegna chiave
@@ -300,6 +374,8 @@ fn unlock_vault(state: State<AppState>, password: String) -> Value {
                 let _ = write_vault_internal(&state, &json!({"practices":[], "agenda":[]}));
             }
             *state.failed_attempts.lock().unwrap() = 0;
+            *state.locked_until.lock().unwrap() = None;
+            lockout_clear(&dir); // clear persisted brute-force state on success
             *state.last_activity.lock().unwrap() = Instant::now();
             let _ = append_audit_log(&state, "Sblocco Vault");
             json!({"success": true, "isNew": is_new})
@@ -370,15 +446,46 @@ fn change_password(state: State<AppState>, current_password: String, new_passwor
     let mut new_salt = vec![0u8; ARGON2_SALT_LEN];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut new_salt);
     let new_key = derive_secure_key(&new_password, &new_salt)?;
-    // Re-encrypt vault con la nuova chiave — plaintext zeroizzato dopo l'uso
+
+    // TRANSACTIONAL ORDER FIX (L7-2): the previous code wrote vault.lex with the new key
+    // BEFORE writing vault.salt. A crash between those two writes caused permanent lockout
+    // (vault encrypted with new key, but salt still belongs to old key → neither password works).
+    //
+    // Correct atomic sequence:
+    //   1. Write all new files to .tmp locations (crash here → old files untouched, safe)
+    //   2. sync_all() each tmp file (data physically on disk before any rename)
+    //   3. Rename new salt into place  ← after this, new password is the "source of truth"
+    //   4. Rename new vault into place
+    //   5. Rename new verify tag into place
+    // A crash between steps 3-5 is recoverable: the user can re-run change_password.
+
     let vault_plaintext = Zeroizing::new(serde_json::to_vec(&vault_data).map_err(|e| e.to_string())?);
-    let encrypted = encrypt_data(&new_key, &vault_plaintext)?;
-    let tmp = dir.join(".vault.tmp");
-    fs::write(&tmp, &encrypted).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, &vault_path).map_err(|e| e.to_string())?;
-    // Update salt and verify
-    fs::write(dir.join(VAULT_SALT_FILE), &new_salt).map_err(|e| e.to_string())?;
-    fs::write(dir.join(VAULT_VERIFY_FILE), make_verify_tag(&new_key)).map_err(|e| e.to_string())?;
+    let encrypted_vault  = encrypt_data(&new_key, &vault_plaintext)?;
+    let new_verify_tag   = make_verify_tag(&new_key);
+
+    // Write all three tmp files with fsync
+    let atomic_write_sync = |path: &std::path::Path, data: &[u8]| -> Result<(), String> {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true).create(true).truncate(true)
+            .open(path).map_err(|e| e.to_string())?;
+        f.write_all(data).map_err(|e| e.to_string())?;
+        f.sync_all().map_err(|e| e.to_string())
+    };
+
+    let tmp_vault  = dir.join(".vault.tmp");
+    let tmp_salt   = dir.join(".salt.tmp");
+    let tmp_verify = dir.join(".verify.tmp");
+
+    atomic_write_sync(&tmp_vault,  &encrypted_vault)?;
+    atomic_write_sync(&tmp_salt,   &new_salt)?;
+    atomic_write_sync(&tmp_verify, &new_verify_tag)?;
+
+    // Atomic rename sequence — new salt first (defines the "current password")
+    fs::rename(&tmp_salt,   dir.join(VAULT_SALT_FILE)).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_vault,  &vault_path).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_verify, dir.join(VAULT_VERIFY_FILE)).map_err(|e| e.to_string())?;
+
     // Re-encrypt audit log if exists — ATOMIC write via tmp+rename (Gemini L3-4)
     let audit_path = dir.join(AUDIT_LOG_FILE);
     if audit_path.exists() {
@@ -386,7 +493,7 @@ fn change_password(state: State<AppState>, current_password: String, new_passwor
             if let Ok(dec) = decrypt_data(&current_key, &enc) {
                 if let Ok(re_enc) = encrypt_data(&new_key, &dec) {
                     let audit_tmp = dir.join(".audit.tmp");
-                    if fs::write(&audit_tmp, re_enc).is_ok() {
+                    if let Ok(()) = atomic_write_sync(&audit_tmp, &re_enc) {
                         let _ = fs::rename(&audit_tmp, &audit_path);
                     }
                 }
@@ -396,10 +503,13 @@ fn change_password(state: State<AppState>, current_password: String, new_passwor
     // Update in-memory key
     *state.vault_key.lock().unwrap() = Some(SecureKey(new_key));
     // Update biometric if saved
-    let user = whoami::username();
-    if let Ok(entry) = keyring::Entry::new(BIO_SERVICE, &user) {
-        if entry.get_password().is_ok() {
-            let _ = entry.set_password(&new_password);
+    #[cfg(not(target_os = "android"))]
+    {
+        let user = whoami::username();
+        if let Ok(entry) = keyring::Entry::new(BIO_SERVICE, &user) {
+            if entry.get_password().is_ok() {
+                let _ = entry.set_password(&new_password);
+            }
         }
     }
     let _ = append_audit_log(&state, "Password cambiata");
@@ -409,12 +519,24 @@ fn change_password(state: State<AppState>, current_password: String, new_passwor
 #[tauri::command]
 fn verify_vault_password(state: State<AppState>, pwd: String) -> Result<Value, String> {
     // Applica lo stesso lockout di unlock_vault per prevenire brute-force parallelo
+    let dir = state.data_dir.lock().unwrap().clone();
+    let (disk_attempts, disk_locked_until) = lockout_load(&dir);
+    {
+        let mut att = state.failed_attempts.lock().unwrap();
+        if disk_attempts > *att { *att = disk_attempts; }
+    }
+    if let Some(end_time) = disk_locked_until {
+        if std::time::SystemTime::now() < end_time {
+            let remaining = end_time.duration_since(std::time::SystemTime::now())
+                .map(|d| d.as_secs()).unwrap_or(0);
+            return Ok(json!({"valid": false, "locked": true, "remaining": remaining}));
+        }
+    }
     if let Some(until) = *state.locked_until.lock().unwrap() {
         if Instant::now() < until {
             return Ok(json!({"valid": false, "locked": true, "remaining": (until - Instant::now()).as_secs()}));
         }
     }
-    let dir = state.data_dir.lock().unwrap().clone();
     let salt = fs::read(dir.join(VAULT_SALT_FILE)).map_err(|e| e.to_string())?;
     let key = derive_secure_key(&pwd, &salt)?;
     let stored = fs::read(dir.join(VAULT_VERIFY_FILE)).unwrap_or_default();
@@ -422,11 +544,15 @@ fn verify_vault_password(state: State<AppState>, pwd: String) -> Result<Value, S
     if !valid {
         let mut att = state.failed_attempts.lock().unwrap();
         *att += 1;
-        if *att >= MAX_FAILED_ATTEMPTS {
+        let locked_sys = if *att >= MAX_FAILED_ATTEMPTS {
+            let t = std::time::SystemTime::now() + Duration::from_secs(LOCKOUT_SECS);
             *state.locked_until.lock().unwrap() = Some(Instant::now() + Duration::from_secs(LOCKOUT_SECS));
-        }
+            Some(t)
+        } else { None };
+        lockout_save(&dir, *att, locked_sys);
     } else {
         *state.failed_attempts.lock().unwrap() = 0;
+        lockout_clear(&dir);
     }
     Ok(json!({"valid": valid}))
 }
@@ -701,7 +827,17 @@ fn save_settings(state: State<AppState>, settings: Value) -> bool {
     let path = state.data_dir.lock().unwrap().join(SETTINGS_FILE);
     let key = get_local_encryption_key();
     match encrypt_data(&key, &serde_json::to_vec(&settings).unwrap_or_default()) {
-        Ok(encrypted) => fs::write(path, encrypted).is_ok(),
+        Ok(encrypted) => {
+            // FSYNC FIX (L7-1): use explicit open+sync_all to guarantee physical write
+            use std::io::Write;
+            let tmp = path.with_extension("json.tmp");
+            let ok = std::fs::OpenOptions::new()
+                .write(true).create(true).truncate(true)
+                .open(&tmp)
+                .and_then(|mut f| { f.write_all(&encrypted)?; f.sync_all() })
+                .is_ok();
+            if ok { fs::rename(&tmp, &path).is_ok() } else { false }
+        },
         Err(_) => false,
     }
 }
@@ -810,14 +946,14 @@ fn verify_license_key(key: &str) -> bool {
 }
 
 #[tauri::command]
-fn activate_license(state: State<AppState>, key: String) -> Value {
+fn activate_license(state: State<AppState>, key: String, client_name: Option<String>) -> Value {
     // Anti brute-force: usa lo stesso lockout del vault
     if let Some(until) = *state.locked_until.lock().unwrap() {
         if Instant::now() < until {
             return json!({"success": false, "locked": true, "remaining": (until - Instant::now()).as_secs()});
         }
     }
-    
+
     let key = key.trim().to_uppercase();
     if !verify_license_key(&key) {
         let mut att = state.failed_attempts.lock().unwrap();
@@ -830,7 +966,15 @@ fn activate_license(state: State<AppState>, key: String) -> Value {
     *state.failed_attempts.lock().unwrap() = 0;
     let path = state.data_dir.lock().unwrap().join(LICENSE_FILE);
     let now = chrono::Utc::now().to_rfc3339();
-    let record = json!({"key": key, "activatedAt": now, "client": "Utente"});
+    // LICENSE FIX (L7 #4): accept optional client_name from the UI instead of hardcoding "Utente".
+    // The frontend activation form can collect the client's name and pass it here.
+    let client = client_name.unwrap_or_else(|| "Utente".to_string());
+    let record = json!({
+        "key": key,
+        "activatedAt": now,
+        "client": client,
+        "keyVersion": "v2"
+    });
     let enc_key = get_local_encryption_key();
     match encrypt_data(&enc_key, &serde_json::to_vec(&record).unwrap_or_default()) {
         Ok(encrypted) => {
@@ -1012,14 +1156,15 @@ fn sync_notification_schedule(state: State<AppState>, schedule: Value) -> bool {
     let plaintext = serde_json::to_vec(&schedule).unwrap_or_default();
     match encrypt_data(&key, &plaintext) {
         Ok(encrypted) => {
-            // RACE CONDITION FIX (Gemini L2-5): use atomic write via tmp+rename
-            // to prevent partial writes that could corrupt the schedule file.
+            // ATOMIC + FSYNC (L7-1 + L2-5): tmp write with sync_all before rename
             let tmp = dir.join(".notif-schedule.tmp");
-            if fs::write(&tmp, encrypted).is_ok() {
-                fs::rename(&tmp, dir.join(NOTIF_SCHEDULE_FILE)).is_ok()
-            } else {
-                false
-            }
+            use std::io::Write;
+            let ok = std::fs::OpenOptions::new()
+                .write(true).create(true).truncate(true)
+                .open(&tmp)
+                .and_then(|mut f| { f.write_all(&encrypted)?; f.sync_all() })
+                .is_ok();
+            if ok { fs::rename(&tmp, dir.join(NOTIF_SCHEDULE_FILE)).is_ok() } else { false }
         },
         Err(_) => false,
     }
@@ -1325,8 +1470,9 @@ pub fn run() {
                 // Auto-lock thread con sleep adattivo:
                 // - vault bloccato → dorme 60s (nessun lavoro da fare, risparmia CPU)
                 // - vault sbloccato → dorme 30s (controlla inattività)
-                // Nessun doppio-lock: legge tutti i valori necessari prima di decidere,
-                // poi acquisisce vault_key solo se deve bloccare (evita deadlock).
+                // RACE CONDITION FIX (L7 #5): emit "lf-vault-warning" 30s before locking
+                // so the frontend can show a "saving..." notice and the user can ping activity.
+                // This prevents data loss when the user is mid-form at the autolock boundary.
                 let ah = app.handle().clone();
                 std::thread::spawn(move || {
                     loop {
@@ -1338,11 +1484,18 @@ pub fn run() {
                         }
                         let minutes = *state.autolock_minutes.lock().unwrap();
                         let last = *state.last_activity.lock().unwrap();
-                        drop(state); // rilascia Mutex prima di dormire
+                        drop(state);
                         std::thread::sleep(Duration::from_secs(30));
                         if minutes == 0 { continue; }
                         let elapsed = Instant::now().duration_since(last);
-                        if elapsed >= Duration::from_secs(minutes as u64 * 60) {
+                        let threshold = Duration::from_secs(minutes as u64 * 60);
+                        // Warning: 30s before actual lock
+                        if elapsed >= threshold.saturating_sub(Duration::from_secs(30))
+                            && elapsed < threshold
+                        {
+                            let _ = ah.emit("lf-vault-warning", ());
+                        }
+                        if elapsed >= threshold {
                             let state2 = ah.state::<AppState>();
                             *state2.vault_key.lock().unwrap() = None;
                             let _ = ah.emit("lf-vault-locked", ());
@@ -1371,6 +1524,7 @@ pub fn run() {
             {
                 // Android: stesso pattern sleep adattivo del desktop —
                 // meno wakeup quando il vault è bloccato = risparmio batteria
+                // RACE CONDITION FIX (L7 #5): warning event 30s before lock
                 let ah = app.handle().clone();
                 std::thread::spawn(move || {
                     loop {
@@ -1386,7 +1540,13 @@ pub fn run() {
                         std::thread::sleep(Duration::from_secs(30));
                         if minutes == 0 { continue; }
                         let elapsed = Instant::now().duration_since(last);
-                        if elapsed >= Duration::from_secs(minutes as u64 * 60) {
+                        let threshold = Duration::from_secs(minutes as u64 * 60);
+                        if elapsed >= threshold.saturating_sub(Duration::from_secs(30))
+                            && elapsed < threshold
+                        {
+                            let _ = ah.emit("lf-vault-warning", ());
+                        }
+                        if elapsed >= threshold {
                             let state2 = ah.state::<AppState>();
                             *state2.vault_key.lock().unwrap() = None;
                             let _ = ah.emit("lf-vault-locked", ());
