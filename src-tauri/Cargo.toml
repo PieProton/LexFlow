@@ -52,13 +52,6 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 open = "5"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 
-# Fix: macOS 26 Tahoe crash — objc2 'relax-sign-encoding' previene
-# panic_cannot_unwind in tao::did_finish_launching (tao#1171).
-# Apple cambiò i return type di alcuni metodi ObjC da 'q'(Int64) a 'Q'(UInt64);
-# objc2 strict validation panics dentro extern-C callbacks → abort().
-[target.'cfg(target_vendor = "apple")'.dependencies]
-objc2 = { version = "0.6", features = ["relax-sign-encoding"] }
-
 # Android: keystore sicuro nativo via android_keystore
 [target.'cfg(target_os = "android")'.dependencies]
 keyring = { version = "3", features = [] }
@@ -73,3 +66,11 @@ strip = "symbols"
 # Android release: strip aggressivo per APK compatti
 [profile.release.package."*"]
 opt-level = "s"
+
+# Fix: macOS 26 Tahoe crash — tao#1171
+# tao 0.34.5 usa objc2 senza 'relax-sign-encoding'; macOS 26 cambiò
+# i return type di metodi ObjC da 'q' a 'Q' → objc2 panics in
+# did_finish_launching dentro un extern-C callback → abort().
+# Usiamo un patch locale di tao con il feature abilitato.
+[patch.crates-io]
+tao = { path = "../patches/tao" }
