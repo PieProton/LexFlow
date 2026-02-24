@@ -48,7 +48,7 @@ jobs:
         run: npm ci
 
       - name: Install client npm dependencies
-        run: cd client && npm ci
+        run: cd client && npm ci --legacy-peer-deps
 
       # ── 5. Build MSI (WiX — si installa in Program Files, richiede UAC) ───
       # WiX Toolset viene scaricato automaticamente da @tauri-apps/cli se non presente.
