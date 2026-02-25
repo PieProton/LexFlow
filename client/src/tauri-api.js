@@ -34,9 +34,32 @@ window.api = {
   checkBio: () => safeInvoke('check_bio'),
   hasBioSaved: () => safeInvoke('has_bio_saved'),
   saveBio: (pwd) => safeInvoke('save_bio', { pwd }),
-  bioLogin: () => safeInvoke('bio_login'),
+  // Normalize different possible Rust responses for `bio_login`:
+  // - legacy: returns the password string
+  // - safer approach: returns { success: true } and does the unlock in Rust
+  // - or returns { password: '<pwd>' } / { pwd: '<pwd>' }
+  // We return either: string (the password), { success: true } (backend unlocked), or null
+  bioLogin: () => safeInvoke('bio_login').then((res) => {
+    if (!res) return null;
+    if (typeof res === 'string') return res;
+    if (typeof res === 'object') {
+      if (res.password) return res.password;
+      if (res.pwd) return res.pwd;
+      if (res.success) return { success: true };
+    }
+    return null;
+  }),
   // legacy alias used in some components
-  loginBio: () => safeInvoke('bio_login'),
+  loginBio: () => safeInvoke('bio_login').then((res) => {
+    if (!res) return null;
+    if (typeof res === 'string') return res;
+    if (typeof res === 'object') {
+      if (res.password) return res.password;
+      if (res.pwd) return res.pwd;
+      if (res.success) return { success: true };
+    }
+    return null;
+  }),
   clearBio: () => safeInvoke('clear_bio'),
 
   // Data

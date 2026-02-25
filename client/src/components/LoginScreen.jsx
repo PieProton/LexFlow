@@ -137,23 +137,24 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
 
     try {
       if (!window.api) throw new Error("API non disponibile");
-      
-      const result = await window.api.unlockVault(password);
-      
+      const providedPwd = password; // keep local copy for potential saveBio before clearing state
+      const result = await window.api.unlockVault(providedPwd);
+
       if (result.success) {
+        // If this is a new vault and user wants biometrics, save with the original provided password
+        if (result.isNew && bioAvailable && !bioSaved) {
+          const consent = window.confirm("Vuoi abilitare l'accesso biometrico (Face ID / Touch ID / impronta) per accedere più velocemente?");
+          if (consent) {
+            try { await window.api.saveBio(providedPwd); } catch (e) { console.error(e); }
+          }
+        }
+
         // SECURITY FIX (Gemini L1-3): clear password from React state immediately after use.
         // JS GC does not zero memory on collection, but at least the reference is removed
         // so the GC can collect it. The field is also cleared to prevent it persisting in
         // the virtual DOM tree longer than necessary.
         setPassword('');
         setConfirm('');
-
-        if (result.isNew && bioAvailable && !bioSaved) {
-          const consent = window.confirm("Vuoi abilitare l'accesso biometrico (Face ID / Touch ID / impronta) per accedere più velocemente?");
-          if (consent) {
-            try { await window.api.saveBio(password); } catch (e) { console.error(e); }
-          }
-        }
 
         onUnlock();
       } else {
@@ -177,25 +178,39 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
       if (!window.api) throw new Error("API non disponibile");
 
       // 1. Recupera la password dal secure storage (Keychain/Keystore)
-      const savedPassword = await window.api.loginBio();
+      const bioResult = await window.api.loginBio();
 
-      if (savedPassword) {
-        // 2. Usa la password recuperata per sbloccare il vault
-        const result = await window.api.unlockVault(savedPassword);
-        if (result.success) {
-          // Pulizia e callback di successo: non mostrare più il form
-          setPassword('');
-          setShowPasswordField(false);
-          // Assicuriamoci di disabilitare il loading PRIMA di smontare il componente
-          setLoading(false);
-          unlocked = true; // segnala che abbiamo effettuato l'unlock con successo
-          onUnlock();
-          return; // esce subito
-        } else {
-          throw new Error(result.error || "Errore decifratura vault");
-        }
+      // Possibili ritorni normalizzati:
+      // - string: la password (legacy)
+      // - { success: true }: il backend ha già sbloccato il vault
+      // - null: fallito / annullato
+      if (!bioResult) throw new Error("Autenticazione annullata o fallita");
+
+      if (typeof bioResult === 'object' && bioResult.success) {
+        // Backend ha già effettuato lo sblocco: chiamiamo onUnlock direttamente
+        setPassword('');
+        setShowPasswordField(false);
+        setLoading(false);
+        unlocked = true;
+        onUnlock();
+        return;
       }
-      throw new Error("Autenticazione annullata o fallita");
+
+      // Altrimenti bioResult è la password in chiaro (string)
+      const savedPassword = String(bioResult);
+      // 2. Usa la password recuperata per sbloccare il vault
+      const result = await window.api.unlockVault(savedPassword);
+      if (result.success) {
+        // Pulizia e callback di successo: non mostrare più il form
+        setPassword('');
+        setShowPasswordField(false);
+        // Assicuriamoci di disabilitare il loading PRIMA di smontare il componente
+        setLoading(false);
+        unlocked = true; // segnala che abbiamo effettuato l'unlock con successo
+        onUnlock();
+        return; // esce subito
+      }
+      throw new Error(result.error || "Errore decifratura vault");
     } catch (err) {
       const errMsg = err?.message || String(err);
       const isAndroidHandoff = errMsg.includes('android-bio-use-frontend');
