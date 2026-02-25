@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import logoSrc from '../assets/logo.png';
 
-export default function LoginScreen({ onUnlock }) {
+export default function LoginScreen({ onUnlock, autoLocked = false }) {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
@@ -63,10 +63,15 @@ export default function LoginScreen({ onUnlock }) {
             const saved = await window.api.hasBioSaved();
             setBioSaved(saved);
 
-            // Auto-trigger biometria se c'è una password salvata e non abbiamo già provato
-            if (saved && !bioTriggered.current) {
+            // Auto-trigger biometria SOLO se lock manuale (non autolock)
+            // Se autoLocked=true l'utente stava facendo altro: non disturbarlo
+            if (saved && !bioTriggered.current && !autoLocked) {
               bioTriggered.current = true;
               setTimeout(() => handleBioLogin(true), 500);
+            } else if (saved && !bioTriggered.current && autoLocked) {
+              // Autolock: mostra direttamente il campo password, bio disponibile ma non auto-trigger
+              bioTriggered.current = true; // marca come "già gestito"
+              setShowPasswordField(true);
             } else if (!saved) {
               setShowPasswordField(true);
             }

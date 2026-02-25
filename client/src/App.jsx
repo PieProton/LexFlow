@@ -29,6 +29,7 @@ export default function App() {
   const [licenseActivated, setLicenseActivated] = useState(false); // true = licenza valida
   const [licenseExpiredMsg, setLicenseExpiredMsg] = useState('');  // messaggio scadenza
   const [isLocked, setIsLocked] = useState(true);
+  const [autoLocked, setAutoLocked] = useState(false); // true = lock automatico (no bio auto-trigger)
   const [blurred, setBlurred] = useState(false);
   const [privacyEnabled, setPrivacyEnabled] = useState(true);
   const [screenshotProtection, setScreenshotProtection] = useState(true);
@@ -174,12 +175,13 @@ export default function App() {
   }, [isLocked, practices, agendaEvents, settings]);
 
   // --- 3. GESTIONE SICUREZZA (BLUR & LOCK) ---
-  const handleLockLocal = useCallback(() => {
+  const handleLockLocal = useCallback((isAuto = false) => {
     setBlurred(false);
     setPractices([]); 
     setAgendaEvents([]);
-    sentNotificationsRef.current = new Set(); // reset ref — nessun re-render
+    sentNotificationsRef.current = new Set();
     setSelectedId(null);
+    setAutoLocked(isAuto); // memorizza se è autolock
     setIsLocked(true);
     navigate('/');
   }, [navigate]);
@@ -191,8 +193,8 @@ export default function App() {
       if (privacyEnabled) setBlurred(val);
     });
 
-    const removeLockListener = window.api.onLock?.(() => handleLockLocal());
-    const removeVaultLockedListener = window.api.onVaultLocked?.(() => handleLockLocal());
+    const removeLockListener = window.api.onLock?.(() => handleLockLocal(true));        // autolock backend
+    const removeVaultLockedListener = window.api.onVaultLocked?.(() => handleLockLocal(true)); // autolock backend
 
     return () => {
       if (typeof removeBlurListener === 'function') removeBlurListener();
@@ -203,7 +205,7 @@ export default function App() {
 
   const handleManualLock = async () => {
     if (window.api?.lockVault) await window.api.lockVault();
-    handleLockLocal();
+    handleLockLocal(false); // lock manuale: bio auto-trigger abilitato
   };
 
   // --- 4. LOGICA DATI & SINCRONIZZAZIONE ---
@@ -268,6 +270,7 @@ export default function App() {
 
   const handleUnlock = async () => {
     setBlurred(false);
+    setAutoLocked(false);
     setIsLocked(false);
     await loadAllData();
   };
@@ -316,7 +319,7 @@ export default function App() {
     return (
       <div className="h-screen w-screen overflow-hidden bg-background">
         <WindowControls />
-        <LoginScreen onUnlock={handleUnlock} />
+        <LoginScreen onUnlock={handleUnlock} autoLocked={autoLocked} />
       </div>
     );
   }
