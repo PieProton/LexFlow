@@ -762,7 +762,7 @@ fn save_bio(pwd: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn bio_login(state: State<AppState>) -> Result<Value, String> {
+fn bio_login(_state: State<AppState>) -> Result<Value, String> {
     #[cfg(target_os = "macos")]
     {
         // FORT KNOX: Swift code passed via stdin — NEVER written to disk
@@ -792,18 +792,18 @@ fn bio_login(state: State<AppState>) -> Result<Value, String> {
             .and_then(|e| e.get_password()).map_err(|e| e.to_string())?;
 
         // Esegui internamente lo sblocco del vault esattamente come unlock_vault
-        let dir = state.data_dir.lock().unwrap().clone();
+    let dir = _state.data_dir.lock().unwrap().clone();
         let salt_path = dir.join(VAULT_SALT_FILE);
         if !salt_path.exists() { return Ok(json!({"success": false, "error": "Vault non inizializzato"})); }
         let salt = fs::read(&salt_path).unwrap_or_default();
         match derive_secure_key(&saved_pwd, &salt) {
             Ok(k) => {
-                *state.vault_key.lock().unwrap() = Some(SecureKey(k));
-                *state.failed_attempts.lock().unwrap() = 0;
-                *state.locked_until.lock().unwrap() = None;
+                *(_state.vault_key.lock().unwrap()) = Some(SecureKey(k));
+                *(_state.failed_attempts.lock().unwrap()) = 0;
+                *(_state.locked_until.lock().unwrap()) = None;
                 lockout_clear(&dir);
-                *state.last_activity.lock().unwrap() = Instant::now();
-                let _ = append_audit_log(&state, "Sblocco Vault (biometria)");
+                *(_state.last_activity.lock().unwrap()) = Instant::now();
+                let _ = append_audit_log(&_state, "Sblocco Vault (biometria)");
                 Ok(json!({"success": true}))
             },
             Err(e) => Ok(json!({"success": false, "error": e}))
@@ -843,18 +843,18 @@ if ($result -eq [Windows.Security.Credentials.UI.UserConsentVerificationResult]:
         let saved_pwd = keyring::Entry::new(BIO_SERVICE, &user)
             .and_then(|e| e.get_password()).map_err(|e| e.to_string())?;
 
-        let dir = state.data_dir.lock().unwrap().clone();
+    let dir = _state.data_dir.lock().unwrap().clone();
         let salt_path = dir.join(VAULT_SALT_FILE);
         if !salt_path.exists() { return Ok(json!({"success": false, "error": "Vault non inizializzato"})); }
         let salt = fs::read(&salt_path).unwrap_or_default();
         match derive_secure_key(&saved_pwd, &salt) {
             Ok(k) => {
-                *state.vault_key.lock().unwrap() = Some(SecureKey(k));
-                *state.failed_attempts.lock().unwrap() = 0;
-                *state.locked_until.lock().unwrap() = None;
+                *(_state.vault_key.lock().unwrap()) = Some(SecureKey(k));
+                *(_state.failed_attempts.lock().unwrap()) = 0;
+                *(_state.locked_until.lock().unwrap()) = None;
                 lockout_clear(&dir);
-                *state.last_activity.lock().unwrap() = Instant::now();
-                let _ = append_audit_log(&state, "Sblocco Vault (biometria)");
+                *(_state.last_activity.lock().unwrap()) = Instant::now();
+                let _ = append_audit_log(&_state, "Sblocco Vault (biometria)");
                 Ok(json!({"success": true}))
             },
             Err(e) => Ok(json!({"success": false, "error": e}))
