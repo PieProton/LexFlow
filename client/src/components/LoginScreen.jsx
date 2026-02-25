@@ -70,6 +70,8 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
             // una biometric registerata.
             if (saved && !bioTriggered.current && !autoLocked) {
               bioTriggered.current = true;
+              // Nascondi il form mentre il popup biometrico di sistema appare
+              setShowPasswordField(false);
               setTimeout(() => handleBioLogin(true), 500);
             } else if (saved && !bioTriggered.current && autoLocked) {
               // Autolock: non auto-triggerare la biometria, ma mostra il pulsante
@@ -164,45 +166,48 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
   };
 
   const handleBioLogin = async (isAutomatic = false) => {
+    setError(''); // pulisce eventuali errori precedenti
     setLoading(true);
     setLoadingText('Autenticazione...');
-    
+
     try {
       if (!window.api) throw new Error("API non disponibile");
-      
-      // Chiama la funzione esposta nel preload
+
+      // 1. Recupera la password dal secure storage (Keychain/Keystore)
       const savedPassword = await window.api.loginBio();
-      
+
       if (savedPassword) {
+        // 2. Usa la password recuperata per sbloccare il vault
         const result = await window.api.unlockVault(savedPassword);
         if (result.success) {
+          // Pulizia e callback di successo: non mostrare più il form
+          setPassword('');
+          setShowPasswordField(false);
           onUnlock();
-          return;
+          return; // esce subito
+        } else {
+          throw new Error(result.error || "Errore decifratura vault");
         }
       }
-      throw new Error("Password non valida");
+      throw new Error("Autenticazione annullata o fallita");
     } catch (err) {
       const errMsg = err?.message || String(err);
-      // ANDROID FIX (Gemini L3-1): "android-bio-use-frontend" is NOT a real error —
-      // it means the Rust layer correctly deferred to the JS biometric flow.
-      // On Android, BiometricPrompt is managed in JS; Rust just signals the handoff.
-      // Show a clean fallback to password without alarming the user.
       const isAndroidHandoff = errMsg.includes('android-bio-use-frontend');
-      console.warn("Login bio fallito:", isAndroidHandoff ? "(Android handoff — expected)" : err);
-      setBioFailed(prev => prev + 1);
-      
-      // Se fallisce troppe volte, forza l'uso della password
+
+      console.warn("Login bio fallito:", isAndroidHandoff ? "(Android handoff)" : err);
+
+      // Incrementa i fallimenti SOLO se non è un semplice handoff Android
+      if (!isAndroidHandoff) {
+        setBioFailed(prev => prev + 1);
+      }
+
+      // Mostriamo il campo password come fallback
+      setShowPasswordField(true);
+
       if (bioFailed + 1 >= MAX_BIO_ATTEMPTS) {
-        setShowPasswordField(true);
-        if (!isAutomatic) setError('Troppi tentativi falliti. Usa la password.');
-      } else if (isAndroidHandoff) {
-        // Android handoff: show password field silently, no scary error
-        setShowPasswordField(true);
-      } else if (!isAutomatic) {
+        setError('Troppi tentativi falliti. Usa la password.');
+      } else if (!isAutomatic && !isAndroidHandoff) {
         setError('Riconoscimento fallito o annullato.');
-      } else {
-        // Se era automatico e fallisce, mostra il campo password senza errori aggressivi
-        setShowPasswordField(true);
       }
     } finally {
       setLoading(false);
