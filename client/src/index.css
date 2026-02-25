@@ -652,3 +652,54 @@
   }
 }
 
+/* ── Toasts (react-hot-toast) — palette and cross-platform look ── */
+.lexflow-toast {
+  display: flex !important;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px !important;
+  border-radius: 12px !important;
+  color: #e2e4ef !important;
+  font-size: 13px !important;
+  min-width: 240px !important;
+  max-width: 480px !important;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.45) !important;
+  border: 1px solid rgba(34,38,58,0.6) !important;
+  background: rgba(19,20,30,0.9) !important; /* fallback */
+}
+
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .lexflow-toast {
+    background: rgba(19,20,30,0.55) !important;
+    -webkit-backdrop-filter: blur(8px) !important;
+    backdrop-filter: blur(8px) !important;
+    border: 1px solid rgba(255,255,255,0.06) !important;
+  }
+}
+
+.lexflow-toast .icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  flex: 0 0 36px;
+  font-size: 16px;
+}
+
+.lexflow-toast .message {
+  flex: 1 1 auto;
+  line-height: 1.2;
+}
+
+/* Variants */
+.lexflow-toast--success { border-left: 4px solid #10b981 !important; }
+.lexflow-toast--error   { border-left: 4px solid #f87171 !important; }
+.lexflow-toast--info    { border-left: 4px solid #3b82f6 !important; }
+
+/* Accessibility: larger tap targets on mobile */
+@media (max-width: 1024px) {
+  .lexflow-toast { min-width: 90% !important; max-width: 90% !important; border-radius: 10px !important; }
+}
+

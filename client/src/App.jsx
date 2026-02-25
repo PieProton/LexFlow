@@ -363,7 +363,35 @@ export default function App() {
           <Toaster
             position="bottom-right"
             toastOptions={{
-              style: { background: '#13141e', color: '#e2e4ef', border: '1px solid #22263a', fontSize: '13px' }
+              // base class so we can target in CSS, plus inline style fallback
+              className: 'lexflow-toast',
+              style: {
+                background: 'rgba(19,20,30,0.9)',
+                color: '#e2e4ef',
+                border: '1px solid rgba(34,38,58,0.6)',
+                fontSize: '13px',
+                padding: '12px 14px',
+                borderRadius: '12px',
+                boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                minWidth: 240,
+                maxWidth: 420,
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)'
+              },
+              success: {
+                duration: 3500,
+                icon: '✅'
+              },
+              error: {
+                duration: 6000,
+                icon: '⚠️'
+              },
+              loading: {
+                duration: 10000,
+              }
             }}
           />
 
