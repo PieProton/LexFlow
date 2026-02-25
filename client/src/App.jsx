@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 // Componenti
 import LoginScreen from './components/LoginScreen';
 import LicenseScreen from './components/LicenseScreen';
-import Sidebar, { HamburgerButton } from './components/Sidebar';
+import Sidebar, { HamburgerButton, useIsMobile } from './components/Sidebar';
 import WindowControls from './components/WindowControls';
 import PracticeDetail from './components/PracticeDetail';
 import CreatePracticeModal from './components/CreatePracticeModal';
@@ -38,6 +38,7 @@ export default function App() {
 
   // --- STATO SIDEBAR MOBILE ---
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const isMobile = useIsMobile(1024); // false su desktop → non monta il burger
   
   // --- STATI DEI DATI & NOTIFICHE ---
   const [practices, setPractices] = useState([]);
@@ -354,8 +355,8 @@ export default function App() {
           onToggle={setSidebarOpen}
         />
 
-        {/* Hamburger button — visibile solo su mobile (<1024px), gestito via CSS */}
-        <HamburgerButton onClick={() => setSidebarOpen(true)} />
+        {/* Hamburger button — solo su mobile/Android (<1024px) */}
+        {isMobile && <HamburgerButton onClick={() => setSidebarOpen(true)} />}
 
         <main className="flex-1 h-screen overflow-hidden relative flex flex-col bg-background">
           <WindowControls />

@@ -17,7 +17,7 @@ import {
 import logo from '../assets/logo.png';
 
 // ── Hook breakpoint mobile ──────────────────────────────────────────────────
-function useIsMobile(breakpoint = 1024) {
+export function useIsMobile(breakpoint = 1024) {
   const [isMobile, setIsMobile] = useState(
     typeof window !== 'undefined' ? window.innerWidth < breakpoint : false
   );
