@@ -1,0 +1,133 @@
+name: "LexFlow Professional Release"
+
+on:
+  push:
+    tags:
+      - 'v*' # Si attiva automaticamente quando crei un tag es: v2.6.0
+  workflow_dispatch: # Ti permette di lanciare la build a mano dal sito GitHub
+
+permissions:
+  contents: write # Necessario per caricare i file nella Release
+
+jobs:
+  # ==========================================
+  # 1. BUILD DESKTOP (MACOS UNIVERSAL & WINDOWS MSI)
+  # ==========================================
+  build-desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-latest"
+            args: "--target universal-apple-darwin --bundles dmg"
+          - platform: "windows-latest"
+            args: "--target x86_64-pc-windows-msvc --bundles msi"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout del codice
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Se siamo su Mac, scarica i target per fare la build Universal (Intel + M1/M2/M3)
+          targets: ${{ matrix.platform == 'macos-latest' && 'x86_64-apple-darwin,aarch64-apple-darwin' || 'x86_64-pc-windows-msvc' }}
+
+      - name: Rust Cache (Velocizza le build successive)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Installa Dipendenze Frontend
+        run: |
+          npm install
+          cd client && npm install --legacy-peer-deps
+
+      - name: Compila e Pubblica (Tauri Action)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- PREDISPOSIZIONE FIRMA MACOS (Notarizzazione Apple) ---
+          # Se questi segreti sono vuoti, l'app verrà creata lo stesso ma senza firma.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "LexFlow ${{ github.ref_name }}"
+          releaseBody: "Release ufficiale Multi-Piattaforma di LexFlow."
+          releaseDraft: false # Imposta su 'true' se vuoi controllare i file prima di renderli pubblici
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  # ==========================================
+  # 2. BUILD ANDROID (APK/AAB)
+  # ==========================================
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del codice
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java (Richiesto per Android)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Rust (Target Android)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Installa Dipendenze Frontend
+        run: |
+          npm install
+          cd client && npm install --legacy-peer-deps
+
+      - name: Decodifica Keystore Android (Firma)
+        # Se hai inserito il segreto, ricrea il file keystore per firmare l'app.
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            mkdir -p src-tauri/gen/android/
+            echo "$KEYSTORE_BASE64" | base64 --decode > src-tauri/gen/android/lexflow-release.keystore
+            echo "Keystore decodificato con successo."
+          else
+            echo "Nessun keystore trovato nei segreti. Procedo con build non firmata."
+          fi
+
+      - name: Build Android APK
+        env:
+          # Variabili per la firma Android (verranno usate se presenti nei GitHub Secrets)
+          TAURI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          TAURI_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TAURI_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: npx tauri android build
+
+      - name: Carica APK nella Release di GitHub
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: src-tauri/gen/android/app/build/outputs/apk/*/app-*-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
