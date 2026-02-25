@@ -7,8 +7,6 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "start:e2e": "npx http-server ./dist -p 5173",
-    "test:e2e": "npx playwright test --config client/e2e/playwright.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -24,7 +22,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
-    "@playwright/test": "^1.58.2",
     "@tailwindcss/vite": "^4.1.18",
     "@tauri-apps/cli": "^2.10.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
@@ -41,7 +38,6 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
-    "http-server": "^14.1.1",
     "tailwindcss": "^4.1.18",
     "terser": "^5.46.0",
     "vite": "^7.3.1"
