@@ -1,6 +1,6 @@
 [package]
 name = "lexflow"
-version = "2.4.0"
+version = "2.6.0"
 description = "LexFlow — Gestionale Studio Legale con Crittografia Zero-Knowledge"
 authors = ["TechnoJaw"]
 edition = "2021"
@@ -33,7 +33,6 @@ tauri-plugin-clipboard-manager = "2"
 dirs = "5"
 whoami = "1"
 rand = "0.8"
-uuid = { version = "1", features = ["v4"] }
 hex = "0.4"
 tokio = { version = "1", features = ["sync"] }
 
@@ -47,9 +46,8 @@ zeroize = { version = "1.7", features = ["derive", "alloc"] }
 
 ed25519-dalek = "2.0"
 
-# image — solo desktop (non necessario su Android)
+# Desktop-only dependencies
 [target.'cfg(not(target_os = "android"))'.dependencies]
-image = { version = "0.25", default-features = false, features = ["png"] }
 open = "5"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 

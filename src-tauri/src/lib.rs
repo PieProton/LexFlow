@@ -1061,14 +1061,9 @@ fn check_license(state: State<AppState>) -> Value {
 // ---------------------------------------------------------------------------
 // Offline Ed25519-signed license verification
 // ---------------------------------------------------------------------------
-// NOTE: replace PUBLIC_KEY_BYTES with the 32 bytes of your Ed25519 public key.
-// To generate a keypair locally and safely, run this helper from the project root:
-//
-//   python3 scripts/gen_keys.py
-//
-// This prints a Rust-friendly list of 32 bytes (paste that into PUBLIC_KEY_BYTES)
-// and prints the private key in base64 for you to store securely. NEVER commit
-// the private key to source control — only the public key belongs in the binary.
+// PUBLIC_KEY_BYTES: 32-byte Ed25519 public key for offline license validation.
+// The corresponding private key is stored securely offline (never in source control).
+// To regenerate: pip install cryptography && python3 -c "from cryptography.hazmat.primitives.asymmetric import ed25519; k=ed25519.Ed25519PrivateKey.generate(); print(list(k.public_key().public_bytes(encoding=__import__('cryptography.hazmat.primitives.serialization',fromlist=['Encoding']).Encoding.Raw, format=__import__('cryptography.hazmat.primitives.serialization',fromlist=['PublicFormat']).PublicFormat.Raw)))"
 const PUBLIC_KEY_BYTES: [u8; 32] = [
     81u8, 178u8, 250u8, 170u8, 33u8, 28u8, 37u8, 147u8,
     69u8, 255u8, 152u8, 47u8, 76u8, 162u8, 41u8, 151u8,
