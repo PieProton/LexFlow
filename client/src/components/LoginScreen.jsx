@@ -64,14 +64,17 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
             setBioSaved(saved);
 
             // Auto-trigger biometria SOLO se lock manuale (non autolock)
-            // Se autoLocked=true l'utente stava facendo altro: non disturbarlo
+            // Se autoLocked=true l'utente stava facendo altro: non auto-triggerare
+            // Però permetti comunque all'utente di sbloccare manualmente con biometria,
+            // quindi NON forzare la visualizzazione del campo password quando è presente
+            // una biometric registerata.
             if (saved && !bioTriggered.current && !autoLocked) {
               bioTriggered.current = true;
               setTimeout(() => handleBioLogin(true), 500);
             } else if (saved && !bioTriggered.current && autoLocked) {
-              // Autolock: mostra direttamente il campo password, bio disponibile ma non auto-trigger
-              bioTriggered.current = true; // marca come "già gestito"
-              setShowPasswordField(true);
+              // Autolock: non auto-triggerare la biometria, ma mostra il pulsante
+              // per permettere lo sblocco rapido via impronta/face se l'utente lo desidera.
+              setShowPasswordField(false);
             } else if (!saved) {
               setShowPasswordField(true);
             }
