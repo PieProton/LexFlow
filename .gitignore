@@ -6,7 +6,6 @@ client/node_modules/
 src-tauri/target/
 src-tauri/gen/
 client/dist/
-releases/
 
 # Build artifacts
 *.dmg
@@ -14,7 +13,6 @@ releases/
 *.blockmap
 *.ipa
 *.apk
-# NON ignorare *.yml — serve per GitHub Actions workflows
 
 # OS files
 .DS_Store
@@ -40,14 +38,3 @@ npm-debug.log*
 # Temp
 *.tmp
 *.bak
-
-# LexFlow License keys (private — never commit!)
-scripts/.lexflow-keys.json
-web-dist/
-release/
-electron/
-build/
-supabase/.temp/
-.tauri/
-.vite/
-.next/

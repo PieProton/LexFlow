@@ -4,6 +4,32 @@ Formato: [SemVer](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ---
 
+## [2.6.0] — 2026-02-26
+
+### Pulizia Progetto
+- **Root cause fix**: rimosso `src-tauri/src/bin/keygen.rs` (Tauri bundlava il binario sbagliato)
+- Rimosso `patches/tao/` (~200 file non necessari)
+- Rimosso `scripts/license-keygen.js` (sistema licenze HMAC vecchio, sostituito da Ed25519)
+- Rimosso `scripts/gen_keys.py` (monouso, chiave pubblica già embedded)
+- Rimosso `install-macos.sh`, `build-android.sh` (duplicati di script npm)
+- Rimosso `ANDROID_BUILD.md` (guida SDK obsoleta)
+- Rimosso `client/e2e/` (test Playwright non integrati)
+- Rimosso `client/src/api.js` (dead code, mai importato)
+- Rimosso `lexflow-release.keystore` e `.env.android` (segreti rimossi dal disco)
+- Rimosso dipendenze Rust inutilizzate: `uuid`, `image`
+- Rimosso config Electron residue da `package.json`
+- Rimosso README ridondanti (client, assets, scripts)
+- Pulito `.gitignore` da voci fantasma (electron/, build/, supabase/, .next/)
+- Allineata versione `Cargo.toml` a 2.6.0
+
+### Fix
+- `tauri.conf.json`: `visible: true`, CSP rimossa, identifier allineato
+- `vite.config.js`: `base: '/'` (era `'./'` stile Electron)
+- Build macOS produce correttamente `LexFlow.app` (8MB) con binario `lexflow` arm64
+- DMG funzionante: `LexFlow_2.6.0_aarch64.dmg` (4.5MB)
+
+---
+
 ## [2.4.0] — 2026-02-24
 
 ### Sicurezza (Audit L7 · L8 · L9)
