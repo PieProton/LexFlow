@@ -171,6 +171,7 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
     setError(''); // pulisce eventuali errori precedenti
     setLoading(true);
     setLoadingText('Autenticazione...');
+    let unlocked = false;
 
     try {
       if (!window.api) throw new Error("API non disponibile");
@@ -187,6 +188,7 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
           setShowPasswordField(false);
           // Assicuriamoci di disabilitare il loading PRIMA di smontare il componente
           setLoading(false);
+          unlocked = true; // segnala che abbiamo effettuato l'unlock con successo
           onUnlock();
           return; // esce subito
         } else {
@@ -215,8 +217,9 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
         setError('Riconoscimento fallito o annullato.');
       }
     } finally {
-      // Se non siamo già usciti per onUnlock(), assicuriamoci di stoppare il loading
-      setLoading(false);
+      // Se non abbiamo già fatto l'unlock (che chiama onUnlock e può smontare il componente),
+      // assicuriamoci di stoppare il loading. Evitiamo setState su componenti smontati.
+      if (!unlocked) setLoading(false);
     }
   };
 
