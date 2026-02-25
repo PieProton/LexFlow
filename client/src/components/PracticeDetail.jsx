@@ -138,9 +138,11 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
   // --- Handlers: PDF Upload ---
   const handleUploadPDF = async () => {
     try {
-      const result = await window.api.selectFolder(); // uses select_file which returns {name, path}
+      const result = await window.api.selectFolder(); // returns path string or null
       if (result) {
-        const attachments = [...(practice.attachments || []), { name: result.split('/').pop(), path: result, addedAt: new Date().toISOString() }];
+        // Supporta separatori sia Unix (/) che Windows (\)
+        const fileName = result.split(/[\\/]/).pop() || result;
+        const attachments = [...(practice.attachments || []), { name: fileName, path: result, addedAt: new Date().toISOString() }];
         update({ attachments });
         toast.success('Documento aggiunto al vault');
       }
