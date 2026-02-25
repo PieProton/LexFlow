@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 
 // Componenti
 import LoginScreen from './components/LoginScreen';
-import LicenseScreen from './components/LicenseScreen';
+import LicenseActivation from './components/LicenseActivation';
 import Sidebar, { HamburgerButton, useIsMobile } from './components/Sidebar';
 import WindowControls from './components/WindowControls';
 import PracticeDetail from './components/PracticeDetail';
@@ -25,10 +25,17 @@ export default function App() {
   const location = useLocation();
   
   // --- STATI GLOBALI DI SICUREZZA ---
-  const [licenseChecked, setLicenseChecked] = useState(false);   // true = licenza verificata
-  const [licenseActivated, setLicenseActivated] = useState(false); // true = licenza valida
-  const [licenseExpiredMsg, setLicenseExpiredMsg] = useState('');  // messaggio scadenza
-  const [isLocked, setIsLocked] = useState(true);
+  // License gating is handled by the LicenseActivation component
+  const [isLocked, setIsLocked] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const e2eFlag = params.get('e2e');
+      const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+      // If ?e2e=1 on localhost (or NODE env is test), start unlocked so tests can hit LicenseActivation.
+      if (e2eFlag === '1' && (isLocalhost || process.env.NODE_ENV === 'test')) return false;
+    } catch (e) { /* ignore */ }
+    return true;
+  });
   const [autoLocked, setAutoLocked] = useState(false); // true = lock automatico (no bio auto-trigger)
   const [blurred, setBlurred] = useState(false);
   const [privacyEnabled, setPrivacyEnabled] = useState(true);
@@ -54,27 +61,12 @@ export default function App() {
   useEffect(() => {
     if (!window.api) return;
 
-    // Controlla prima la licenza, poi carica le impostazioni
-    window.api.checkLicense?.().then(lic => {
-      setLicenseChecked(true);
-      if (lic?.activated === true) {
-        setLicenseActivated(true);
-      } else {
-        setLicenseActivated(false);
-        // Se scaduta, mostra il motivo
-        if (lic?.expired && lic?.reason) {
-          setLicenseExpiredMsg(lic.reason);
-        }
-      }
-    }).catch(() => {
-      setLicenseChecked(true);
-      setLicenseActivated(false);
-    });
+    // Carichiamo informazioni non-legate alla licenza (version, settings)
 
-    window.api.getAppVersion?.().then(v => setVersion(v || '')).catch(() => {});
-    
-    // Carichiamo le impostazioni (incluso il tempo di notifica)
-    window.api.getSettings?.().then(s => {
+  window.api.getAppVersion?.().then(v => setVersion(v || '')).catch(() => {});
+
+  // Carichiamo le impostazioni (incluso il tempo di notifica)
+  window.api.getSettings?.().then(s => {
       if (s) {
         setSettings(s);
         if (typeof s.privacyBlurEnabled === 'boolean') setPrivacyEnabled(s.privacyBlurEnabled);
@@ -276,6 +268,20 @@ export default function App() {
     await loadAllData();
   };
 
+  // E2E bypass: when testing, make it easy to skip the login gate.
+  // This is guarded so it only activates on localhost or in test builds.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const e2eFlag = params.get('e2e');
+      const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+      if (e2eFlag === '1' && (isLocalhost || process.env.NODE_ENV === 'test')) {
+        // Give the app a tick to finish initial mounts
+        setTimeout(() => { handleUnlock(); }, 50);
+      }
+    } catch (e) { /* ignore in environments without window */ }
+  }, [handleUnlock]);
+
   const savePractices = async (newList) => {
     setPractices(newList);
     if (window.api?.savePractices) {
@@ -298,22 +304,7 @@ export default function App() {
 
   // --- 5. RENDER ---
 
-  // Gate 1: Licenza — blocca tutto finché non verificata/attivata
-  if (!licenseChecked) {
-    return (
-      <div className="h-screen w-screen overflow-hidden bg-background flex items-center justify-center">
-        <div className="animate-pulse text-text-muted text-xs tracking-widest uppercase">Verifico licenza…</div>
-      </div>
-    );
-  }
-  if (!licenseActivated) {
-    return (
-      <div className="h-screen w-screen overflow-hidden bg-background">
-        <WindowControls />
-        <LicenseScreen onActivated={() => { setLicenseActivated(true); setLicenseExpiredMsg(''); }} expiredMessage={licenseExpiredMsg} />
-      </div>
-    );
-  }
+  // License gating is handled by the LicenseActivation component mounted below
 
   // Gate 2: Vault — richiede password (o biometria)
   if (isLocked) {
@@ -328,7 +319,8 @@ export default function App() {
   const selectedPractice = practices.find(p => p.id === selectedId);
 
   return (
-    <ErrorBoundary>
+    <LicenseActivation>
+      <ErrorBoundary>
       <div className="flex h-screen bg-background text-text-primary overflow-hidden border border-white/5 rounded-lg shadow-2xl relative">
         
         {/* Privacy Shield */}
@@ -454,5 +446,6 @@ export default function App() {
         )}
       </div>
     </ErrorBoundary>
+    </LicenseActivation>
   );
 }

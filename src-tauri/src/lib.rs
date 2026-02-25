@@ -15,6 +15,11 @@ use aes_gcm::{Aes256Gcm, Key, Nonce, aead::{Aead, KeyInit}};
 use argon2::{Argon2, Params, Version, Algorithm};
 use sha2::{Sha256, Digest};
 use hmac::{Hmac, Mac};
+// Ed25519 verification (offline license signature check)
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // ═══════════════════════════════════════════════════════════
 //  CONSTANTS — Security Parameters
@@ -924,6 +929,35 @@ fn get_audit_log(state: State<AppState>) -> Result<Value, String> {
 // ═══════════════════════════════════════════════════════════
 //  SETTINGS & LICENSE
 // ═══════════════════════════════════════════════════════════
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_license_verification_full_cycle() {
+        // Questa è la tua licenza di prova (ho aggiunto il prefisso LXFW. richiesto dal codice)
+        // Nota: i campi devono essere "c" (client) ed "e" (expiry) come definito nella tua struct LicensePayload
+    let valid_token = "LXFW.eyJjIjoicGlldHJvX3Rlc3QiLCJlIjoxODAzNTU1MjA5MDQ2LCJpZCI6IjM4NDA2MzgxLTU1NTQtNDdhMi05NDVjLTE4OWJiZGQ2YjdlNyJ9.8YfuzlNLv8DjmQ3w3o7tzYuVSCrjJOkyY01oGUlLNUO-tOGxlBHGpmWHqwlya6PnqoYz_CUf_EqOue3hyHScDw";
+
+        // 1. Test verifica positiva
+        let result = verify_license(valid_token.to_string());
+        assert!(result.valid, "La licenza valida è stata respinta! Errore: {}", result.message);
+        assert_eq!(result.client.unwrap(), "pietro_test");
+
+        // 2. Test Anti-Manomissione (cambiamo un solo carattere nella firma)
+        let mut tampered_token = valid_token.to_string();
+        tampered_token.replace_range(tampered_token.len()-5..tampered_token.len()-4, "Z");
+        let tamper_result = verify_license(tampered_token);
+        assert!(!tamper_result.valid, "Sicurezza fallita: la licenza manomessa è stata accettata!");
+        assert_eq!(tamper_result.message, "Firma non valida o licenza manomessa!");
+
+        // 3. Test Formato errato
+        let invalid_format = "TOKEN_SENZA_PUNTI";
+        let format_result = verify_license(invalid_format.to_string());
+        assert!(!format_result.valid);
+        assert_eq!(format_result.message, "Formato chiave non valido.");
+    }
+}
 
 #[tauri::command]
 fn get_settings(state: State<AppState>) -> Value {
@@ -994,101 +1028,118 @@ fn check_license(state: State<AppState>) -> Value {
             // Migration from plaintext
             if let Ok(text) = std::str::from_utf8(&enc) {
                 if let Ok(val) = serde_json::from_str::<Value>(text) {
-                    if let Ok(re_enc) = encrypt_data(&key, &serde_json::to_vec(&val).unwrap_or_default()) {
-                        let _ = fs::write(&path, re_enc);
-                    }
                     val
                 } else { return json!({"activated": false}); }
             } else { return json!({"activated": false}); }
         }
     } else { return json!({"activated": false}); };
-    
+
     let license_key = data.get("key").and_then(|k| k.as_str()).unwrap_or("");
-    if !license_key.is_empty() && verify_license_key(license_key) {
-        // Scadenza 24h dall'attivazione — uguale su desktop e mobile
-        if let Some(activated_str) = data.get("activatedAt").and_then(|v| v.as_str()) {
-            if let Ok(activated_time) = chrono::DateTime::parse_from_rfc3339(activated_str) {
-                let now = chrono::Utc::now();
-                let elapsed = now.signed_duration_since(activated_time);
-                if elapsed > chrono::Duration::days(365) {
-                    // SECURITY FIX (Level-8 A4): NEVER delete the license file on expiry check.
-                    // Previously fs::remove_file was called here; a CMOS battery reset or NTP
-                    // correction could trigger a false-positive expiry and permanently destroy
-                    // the license file. Now we just report expired=true and leave the file intact.
-                    return json!({"activated": false, "expired": true, "reason": "Chiave scaduta (1 anno). Inserisci una nuova chiave."});
-                }
-                let remaining_secs = (chrono::Duration::days(365) - elapsed).num_seconds().max(0);
-                return json!({
-                    "activated": true,
-                    "key": license_key,
-                    "activatedAt": activated_str,
-                    "client": data.get("client").cloned().unwrap_or(Value::Null),
-                    "remainingSecs": remaining_secs,
-                });
-            }
-            // SECURITY FIX (Level-8 A4): do not delete on parse failure either — report error only.
-            return json!({"activated": false, "expired": true, "reason": "Formato licenza obsoleto. Inserisci una nuova chiave."});
+
+    if !license_key.is_empty() {
+        // Verify using the new Ed25519-signed token
+        let verification = verify_license(license_key.to_string());
+
+        if verification.valid {
+            return json!({
+                "activated": true,
+                "key": license_key,
+                "activatedAt": data.get("activatedAt").cloned().unwrap_or(Value::Null),
+                "client": verification.client.unwrap_or_else(|| "Studio Legale".to_string()),
+            });
+        } else {
+            return json!({"activated": false, "expired": true, "reason": verification.message});
         }
-        // SECURITY FIX (Level-8 A4): do not delete on missing activatedAt — report error only.
-        json!({"activated": false, "expired": true, "reason": "Licenza corrotta. Inserisci una nuova chiave."})
-    } else {
-        json!({"activated": false})
     }
+
+    json!({"activated": false})
 }
 
-// MASTER_SECRET deve essere identico alla costante nel keygen JS.
-// NON usare get_license_secret() qui — quella è machine-specific e renderebbe
-// le chiavi generate dallo sviluppatore non verificabili sul PC del cliente.
+// NOTE: legacy symmetric license verification (HMAC/XOR secret) has been removed.
+// The project now uses Ed25519-signed license tokens verified by `verify_license`.
+
+// ---------------------------------------------------------------------------
+// Offline Ed25519-signed license verification
+// ---------------------------------------------------------------------------
+// NOTE: replace PUBLIC_KEY_BYTES with the 32 bytes of your Ed25519 public key.
+// To generate a keypair locally and safely, run this helper from the project root:
 //
-// Offuscamento XOR: la stringa non appare in chiaro nel binario (non visibile con `strings`).
-// Generato con: secret.bytes().zip(XOR_MASK.iter().cycle()).map(|(b,k)| b^k).collect()
-// Nota: questa è sicurezza per oscurità, non crittografia. Il segreto vero va custodito
-// nel codice sorgente privato — questo impedisce solo l'estrazione triviale da binario.
-
-const LICENSE_SECRET_XOR: &[u8] = &[
-    0x88,0x4f,0x29,0x89,0x04,0x2c,0x97,0xdd,0x86,0x34,
-    0x8f,0x86,0xe9,0xcd,0x67,0x5a,0x95,0xf5,0xe1,0x24,
-    0x09,0xf8,0x88,0x3f,0xb0,0xe9,0x68,0xf0,0xd1,0x26,
-    0x2d,0x05,0xff,0x8d,0x9b,0x90,0xca,0xf9,0xb2,0x4d,
-    0x86,0xba,0x29,0x61,
+//   python3 scripts/gen_keys.py
+//
+// This prints a Rust-friendly list of 32 bytes (paste that into PUBLIC_KEY_BYTES)
+// and prints the private key in base64 for you to store securely. NEVER commit
+// the private key to source control — only the public key belongs in the binary.
+const PUBLIC_KEY_BYTES: [u8; 32] = [
+    81u8, 178u8, 250u8, 170u8, 33u8, 28u8, 37u8, 147u8,
+    69u8, 255u8, 152u8, 47u8, 76u8, 162u8, 41u8, 151u8,
+    44u8, 227u8, 28u8, 17u8, 109u8, 112u8, 47u8, 60u8,
+    178u8, 148u8, 216u8, 41u8, 16u8, 50u8, 191u8, 104u8,
 ];
-const LICENSE_XOR_MASK: &[u8] = &[0x47, 0x5a, 0x32, 0x71, 0x2c];
 
-fn get_license_master_secret() -> Vec<u8> {
-    LICENSE_SECRET_XOR.iter()
-        .zip(LICENSE_XOR_MASK.iter().cycle())
-        .map(|(b, k)| b ^ k)
-        .collect()
+#[derive(Deserialize, Serialize)]
+struct LicensePayload {
+    c: String, // client name
+    e: u64,    // expiry in milliseconds since epoch
+    id: String, // unique key id
 }
 
-fn hmac_checksum(payload: &str) -> String {
-    let secret = get_license_master_secret();
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&secret)
-        .expect("HMAC init");
-    mac.update(payload.as_bytes());
-    let result = mac.finalize().into_bytes();
-    // SECURITY FIX (Gemini L5-2): 8 hex chars (4 bytes) instead of 4 (2 bytes).
-    // 4-char checksum = 65536 brute-force combinations; 8-char = 4 billion.
-    format!("{:02X}{:02X}{:02X}{:02X}", result[0], result[1], result[2], result[3])
-}
-
-fn verify_license_key(key: &str) -> bool {
-    let parts: Vec<&str> = key.split('-').collect();
-    if parts.len() != 5 || parts[0] != "LXFW" { return false; }
-    let s2 = parts[1];
-    let s3 = parts[2];
-    let s4 = parts[3];
-    let checksum = parts[4];
-    // Ogni segmento payload deve essere 4 caratteri hex validi.
-    // SECURITY FIX (Gemini L5-2): checksum is now 8 hex chars (was 4).
-    if s2.len() != 4 || s3.len() != 4 || s4.len() != 4 || checksum.len() != 8 { return false; }
-    let payload = format!("{}{}{}", s2, s3, s4);
-    if hex::decode(&payload).is_err() { return false; }
-    hmac_checksum(&payload) == checksum
+#[derive(Serialize)]
+struct VerificationResult {
+    valid: bool,
+    client: Option<String>,
+    message: String,
 }
 
 #[tauri::command]
-fn activate_license(state: State<AppState>, key: String, client_name: Option<String>) -> Value {
+fn verify_license(key_string: String) -> VerificationResult {
+    // Expected format: LXFW.<payload_b64>.<signature_b64>
+    let parts: Vec<&str> = key_string.split('.').collect();
+    if parts.len() != 3 || parts[0] != "LXFW" {
+        return VerificationResult { valid: false, client: None, message: "Formato chiave non valido.".into() };
+    }
+
+    let payload_b64 = parts[1];
+    let signature_b64 = parts[2];
+
+    let payload_bytes = match URL_SAFE_NO_PAD.decode(payload_b64) {
+        Ok(b) => b,
+        Err(_) => return VerificationResult { valid: false, client: None, message: "Errore decodifica payload.".into() },
+    };
+
+    let signature_bytes = match URL_SAFE_NO_PAD.decode(signature_b64) {
+        Ok(b) => b,
+        Err(_) => return VerificationResult { valid: false, client: None, message: "Errore decodifica firma.".into() },
+    };
+
+    let public_key = match VerifyingKey::from_bytes(&PUBLIC_KEY_BYTES) {
+        Ok(k) => k,
+        Err(_) => return VerificationResult { valid: false, client: None, message: "Errore chiave pubblica interna.".into() },
+    };
+
+    let signature = match Signature::from_slice(&signature_bytes) {
+        Ok(s) => s,
+        Err(_) => return VerificationResult { valid: false, client: None, message: "Firma corrotta.".into() },
+    };
+
+    if public_key.verify(payload_b64.as_bytes(), &signature).is_err() {
+        return VerificationResult { valid: false, client: None, message: "Firma non valida o licenza manomessa!".into() };
+    }
+
+    let payload: LicensePayload = match serde_json::from_slice(&payload_bytes) {
+        Ok(p) => p,
+        Err(_) => return VerificationResult { valid: false, client: None, message: "Dati licenza corrotti.".into() },
+    };
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    if now > payload.e {
+        return VerificationResult { valid: false, client: Some(payload.c), message: "Licenza scaduta.".into() };
+    }
+
+    VerificationResult { valid: true, client: Some(payload.c), message: "Licenza attivata con successo!".into() }
+}
+
+#[tauri::command]
+fn activate_license(state: State<AppState>, key: String, _client_name: Option<String>) -> Value {
     // Anti brute-force: usa lo stesso lockout del vault
     if let Some(until) = *state.locked_until.lock().unwrap() {
         if Instant::now() < until {
@@ -1096,33 +1147,39 @@ fn activate_license(state: State<AppState>, key: String, client_name: Option<Str
         }
     }
 
-    let key = key.trim().to_uppercase();
-    if !verify_license_key(&key) {
+    let key = key.trim().to_string(); // Le chiavi B64 sono case-sensitive, non uppercasiamo
+
+    // Verifica asimmetrica (Ed25519)
+    let verification = verify_license(key.clone());
+
+    if !verification.valid {
         let mut att = state.failed_attempts.lock().unwrap();
         *att += 1;
         if *att >= MAX_FAILED_ATTEMPTS {
             *state.locked_until.lock().unwrap() = Some(Instant::now() + Duration::from_secs(LOCKOUT_SECS));
         }
-        return json!({"success": false, "error": "Chiave non valida. Controlla di averla inserita correttamente."});
+        return json!({"success": false, "error": verification.message});
     }
+
     *state.failed_attempts.lock().unwrap() = 0;
     let path = state.data_dir.lock().unwrap().join(LICENSE_FILE);
     let now = chrono::Utc::now().to_rfc3339();
-    // LICENSE FIX (L7 #4): accept optional client_name from the UI instead of hardcoding "Utente".
-    // The frontend activation form can collect the client's name and pass it here.
-    let client = client_name.unwrap_or_else(|| "Utente".to_string());
+
+    // Il client viene estratto in modo sicuro dal payload firmato
+    let client = verification.client.unwrap_or_else(|| "Studio Legale".to_string());
+
     let record = json!({
         "key": key,
         "activatedAt": now,
         "client": client,
-        "keyVersion": "v2"
+        "keyVersion": "ed25519"
     });
     let enc_key = get_local_encryption_key();
     match encrypt_data(&enc_key, &serde_json::to_vec(&record).unwrap_or_default()) {
         Ok(encrypted) => {
             match fs::write(&path, encrypted) {
                 Ok(_) => json!({"success": true, "key": key}),
-                Err(e) => json!({"success": false, "error": format!("Errore: {}", e)}),
+                Err(e) => json!({"success": false, "error": format!("Errore salvataggio: {}", e)}),
             }
         },
         Err(e) => json!({"success": false, "error": format!("Errore cifratura: {}", e)}),
@@ -1865,6 +1922,7 @@ pub fn run() {
             sync_notification_schedule,
             // License
             check_license,
+            verify_license,
             activate_license,
             // Import / Export
             export_vault,

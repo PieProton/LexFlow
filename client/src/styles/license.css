@@ -1,0 +1,24 @@
+/* Styles for LicenseActivation component */
+.lf-overlay {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(2,6,23,0.85); z-index: 10000; font-family: sans-serif;
+}
+.lf-card {
+  width: 520px; max-width: 94%; border-radius: 8px; padding: 30px;
+  background: var(--bg-card); color: var(--text); box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+  border: 1px solid var(--border);
+}
+.lf-title { margin: 0 0 10px 0; font-size: 1.4rem; font-weight: 600; }
+.lf-sub { margin: 0 0 20px 0; color: #a8b3c7; font-size: 0.9rem; line-height: 1.4; }
+.lf-textarea {
+  width: 100%; border-radius: 6px; padding: 12px; resize: none;
+  border: 1px solid var(--border); background: var(--bg-input); color: var(--text);
+  font-family: monospace; font-size: 0.85rem; box-sizing: border-box;
+}
+.lf-actions { display:flex; gap:10px; margin-top:20px; align-items:center; }
+.lf-btn { padding:12px 24px; border-radius:6px; font-weight:600; border:none; cursor:pointer; }
+.lf-btn-primary { background: var(--primary); color: #fff; }
+.lf-info { margin-left:auto; color: var(--text-dim); font-size:0.75rem; text-align:right; }
+.lf-msg { margin-top:20px; padding:12px; border-radius:6px; font-size:0.85rem; }
+.lf-msg.success { background: rgba(52,211,153,0.12); color: var(--success); border: 1px solid rgba(16,185,129,0.2); }
+.lf-msg.error { background: rgba(248,113,113,0.12); color: var(--danger); border: 1px solid rgba(185,28,28,0.2); }

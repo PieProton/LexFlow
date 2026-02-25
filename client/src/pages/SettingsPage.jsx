@@ -18,6 +18,7 @@ import {
   EyeOff
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import LicenseSettings from '../components/LicenseSettings';
 
 const PREAVVISO_OPTIONS = [
   { value: 0, label: 'Al momento' },
@@ -416,6 +417,9 @@ export default function SettingsPage({ onLock }) {
           </div>
         </section>
       </div>
+
+      {/* License information card inserted at the end of settings */}
+      <LicenseSettings />
 
       <div className="pt-12 text-center">
         <button 
