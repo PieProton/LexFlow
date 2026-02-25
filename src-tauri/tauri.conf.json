@@ -26,7 +26,7 @@
         "resizable": true,
         "fullscreen": false,
         "transparent": false,
-        "visible": false,
+    "visible": true,
         "backgroundColor": "#08090f"
       }
     ],
