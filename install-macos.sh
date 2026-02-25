@@ -57,6 +57,7 @@ if [ -d "$DESKTOP_APP" ]; then
 fi
 
 # ── 6. Copia DMG in "Le Mie App/LexFlow" ─────────────────────────────────────
+DMG_FILE=$(find "$DMG_DIR" -name "*.dmg" ! -name "rw.*.dmg" 2>/dev/null | head -1)
 mkdir -p "$DISTRIB_DIR"
 if [ -n "$DMG_FILE" ]; then
     # Rimuovi vecchi DMG LexFlow dalla cartella
@@ -65,8 +66,7 @@ if [ -n "$DMG_FILE" ]; then
     echo "   ✓ DMG copiato in ~/Desktop/Le Mie App/LexFlow/"
 fi
 
-# ── 7. Mostra percorso DMG finale ─────────────────────────────────────────────
-DMG_FILE=$(find "$DMG_DIR" -name "*.dmg" ! -name "rw.*.dmg" 2>/dev/null | head -1)
+# ── 7. Mostra riepilogo finale ─────────────────────────────────────────────────
 if [ -n "$DMG_FILE" ]; then
     DMG_SIZE=$(du -sh "$DMG_FILE" | cut -f1)
     echo ""

@@ -63,8 +63,8 @@ function generateKey({ client = 'Utente', expires = null } = {}) {
   const s3 = randomHex.substring(4, 8);
   const s4 = randomHex.substring(8, 12);
 
-  // Checksum HMAC-SHA256 calcolato su S2+S3+S4 con MASTER_SECRET
-  const checksum = hmac(s2 + s3 + s4).substring(0, 4);
+  // Checksum HMAC-SHA256 calcolato su S2+S3+S4 con MASTER_SECRET (8 hex chars)
+  const checksum = hmac(s2 + s3 + s4); // hmac() già restituisce 8 char
 
   const key     = `LXFW-${s2}-${s3}-${s4}-${checksum}`;
   return { key, client, expires, created, id };
@@ -76,8 +76,8 @@ function verifyKeyFormat(keyStr) {
   const parts = keyStr.split('-');
   if (parts.length !== 5 || parts[0] !== 'LXFW') return false;
   const [, s2, s3, s4, checksum] = parts;
-  if (s2.length !== 4 || s3.length !== 4 || s4.length !== 4 || checksum.length !== 4) return false;
-  return hmac(s2 + s3 + s4).substring(0, 4) === checksum;
+  if (s2.length !== 4 || s3.length !== 4 || s4.length !== 4 || checksum.length !== 8) return false;
+  return hmac(s2 + s3 + s4) === checksum;
 }
 
 // ── ARGS PARSING ──────────────────────────────────────────────────────────

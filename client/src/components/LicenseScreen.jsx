@@ -18,13 +18,13 @@ export default function LicenseScreen({ onActivated, expiredMessage }) {
     let raw = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
     // Rimuovi i trattini e lavora sul contenuto grezzo
     const base = raw.replace(/-/g, '');
-    // Inserisce i trattini nelle posizioni corrette: 4-4-4-4-4
+    // Inserisce i trattini nelle posizioni corrette: LXFW(4)-XXXX(4)-XXXX(4)-XXXX(4)-XXXXXXXX(8)
     const segments = [];
     segments.push(base.slice(0, 4));
     if (base.length > 4)  segments.push(base.slice(4, 8));
     if (base.length > 8)  segments.push(base.slice(8, 12));
     if (base.length > 12) segments.push(base.slice(12, 16));
-    if (base.length > 16) segments.push(base.slice(16, 20));
+    if (base.length > 16) segments.push(base.slice(16, 24));
     const formatted = segments.join('-');
     setKey(formatted);
     setError('');
@@ -36,10 +36,11 @@ export default function LicenseScreen({ onActivated, expiredMessage }) {
       setError('Inserisci la chiave di licenza ricevuta.');
       return;
     }
-    // Formato minimo: LXFW-XXXX-XXXX-XXXX-XXXX (24 caratteri con trattini)
+    // Formato: LXFW-XXXX-XXXX-XXXX-XXXXXXXX (28 caratteri con trattini)
     const parts = trimmed.split('-');
-    if (parts.length !== 5 || parts[0] !== 'LXFW' || parts.some(p => p.length !== 4)) {
-      setError('Formato chiave non valido. Esempio: LXFW-AB12-CD34-EF56-GH78');
+    if (parts.length !== 5 || parts[0] !== 'LXFW' ||
+        parts[1].length !== 4 || parts[2].length !== 4 || parts[3].length !== 4 || parts[4].length !== 8) {
+      setError('Formato chiave non valido. Esempio: LXFW-AB12-CD34-EF56-GH78AB90');
       return;
     }
     setLoading(true);
@@ -118,8 +119,8 @@ export default function LicenseScreen({ onActivated, expiredMessage }) {
             onKeyDown={handleKeyDown}
             spellCheck={false}
             autoComplete="off"
-            placeholder="LXFW-XXXX-XXXX-XXXX-XXXX"
-            maxLength={24}
+            placeholder="LXFW-XXXX-XXXX-XXXX-XXXXXXXX"
+            maxLength={28}
             style={{
               width: '100%',
               padding: '14px 16px',
