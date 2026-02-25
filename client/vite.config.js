@@ -9,8 +9,8 @@ export default defineConfig({
     tailwindcss() // <--- QUESTO era il pezzo mancante per il CSS!
   ],
   
-  // Fondamentale per Electron (percorsi relativi)
-  base: './', 
+  // Base path per il build. Usa '/' per Tauri v2 (evita problemi di caricamento delle risorse)
+  base: '/',
 
   resolve: {
     alias: {

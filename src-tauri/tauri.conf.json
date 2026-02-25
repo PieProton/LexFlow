@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "LexFlow",
   "version": "2.6.0",
-  "identifier": "com.pietrolongo.lexflow",
+  "identifier": "com.technojaw.lexflow",
   "build": {
     "frontendDist": "../client/dist",
     "devUrl": "http://localhost:5173",
@@ -26,13 +26,10 @@
         "resizable": true,
         "fullscreen": false,
         "transparent": false,
-    "visible": true,
+        "visible": true,
         "backgroundColor": "#08090f"
       }
-    ],
-    "security": {
-      "csp": "default-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost ws://localhost:5173; img-src 'self' data: blob:; style-src 'self' 'nonce-{nonce}'; font-src 'self' data:"
-    }
+    ]
   },
   "bundle": {
     "active": true,
