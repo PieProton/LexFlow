@@ -76,6 +76,8 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
             } else if (saved && !bioTriggered.current && autoLocked) {
               // Autolock: non auto-triggerare la biometria, ma mostra il pulsante
               // per permettere lo sblocco rapido via impronta/face se l'utente lo desidera.
+              // Segniamo comunque che è stato gestito per evitare eventuali oscillazioni
+              bioTriggered.current = true;
               setShowPasswordField(false);
             } else if (!saved) {
               setShowPasswordField(true);
@@ -183,6 +185,8 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
           // Pulizia e callback di successo: non mostrare più il form
           setPassword('');
           setShowPasswordField(false);
+          // Assicuriamoci di disabilitare il loading PRIMA di smontare il componente
+          setLoading(false);
           onUnlock();
           return; // esce subito
         } else {
@@ -196,20 +200,22 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
 
       console.warn("Login bio fallito:", isAndroidHandoff ? "(Android handoff)" : err);
 
-      // Incrementa i fallimenti SOLO se non è un semplice handoff Android
+      // Calcola next failed count senza dipendere da aggiornamenti asincroni dello state
+      const nextFailed = bioFailed + (isAndroidHandoff ? 0 : 1);
       if (!isAndroidHandoff) {
         setBioFailed(prev => prev + 1);
       }
 
-      // Mostriamo il campo password come fallback
+      // Mostriamo il campo password come fallback PRIMA di ogni altra cosa
       setShowPasswordField(true);
 
-      if (bioFailed + 1 >= MAX_BIO_ATTEMPTS) {
+      if (nextFailed >= MAX_BIO_ATTEMPTS) {
         setError('Troppi tentativi falliti. Usa la password.');
       } else if (!isAutomatic && !isAndroidHandoff) {
         setError('Riconoscimento fallito o annullato.');
       }
     } finally {
+      // Se non siamo già usciti per onUnlock(), assicuriamoci di stoppare il loading
       setLoading(false);
     }
   };
