@@ -7,7 +7,8 @@ import {
   Fingerprint, 
   KeyRound, 
   ShieldAlert, 
-  CheckCircle2
+  CheckCircle2,
+  Timer
 } from 'lucide-react';
 import logoSrc from '../assets/logo.png';
 
@@ -19,6 +20,10 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
   const [loadingText, setLoadingText] = useState('Sblocco...');
   const [isNew, setIsNew] = useState(null);
   const [showPwd, setShowPwd] = useState(false);
+  
+  // Brute-force lockout countdown
+  const [lockoutSeconds, setLockoutSeconds] = useState(0);
+  const lockoutTimer = useRef(null);
   
   // Stati per la Biometria
   const [bioAvailable, setBioAvailable] = useState(false);
@@ -63,22 +68,15 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
             const saved = await window.api.hasBioSaved();
             setBioSaved(saved);
 
-            // Auto-trigger biometria SOLO se lock manuale (non autolock)
-            // Se autoLocked=true l'utente stava facendo altro: non auto-triggerare
-            // Però permetti comunque all'utente di sbloccare manualmente con biometria,
-            // quindi NON forzare la visualizzazione del campo password quando è presente
-            // una biometric registerata.
-            if (saved && !bioTriggered.current && !autoLocked) {
+            // Auto-trigger biometria SEMPRE se le credenziali sono salvate.
+            // Sia all'avvio normale che dopo autolock: il popup di sistema
+            // appare subito — l'utente mette il dito / Face ID e sblocca
+            // senza dover cliccare nulla.
+            if (saved && !bioTriggered.current) {
               bioTriggered.current = true;
               // Nascondi il form mentre il popup biometrico di sistema appare
               setShowPasswordField(false);
-              setTimeout(() => handleBioLogin(true), 500);
-            } else if (saved && !bioTriggered.current && autoLocked) {
-              // Autolock: non auto-triggerare la biometria, ma mostra il pulsante
-              // per permettere lo sblocco rapido via impronta/face se l'utente lo desidera.
-              // Segniamo comunque che è stato gestito per evitare eventuali oscillazioni
-              bioTriggered.current = true;
-              setShowPasswordField(false);
+              setTimeout(() => handleBioLogin(true), 400);
             } else if (!saved) {
               setShowPasswordField(true);
             }
@@ -97,6 +95,30 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
 
     init();
   }, []);
+
+  // ─── Countdown timer per lockout brute-force ───────────────────────────────
+  useEffect(() => {
+    if (lockoutSeconds <= 0) {
+      if (lockoutTimer.current) clearInterval(lockoutTimer.current);
+      return;
+    }
+    lockoutTimer.current = setInterval(() => {
+      setLockoutSeconds(prev => {
+        if (prev <= 1) {
+          clearInterval(lockoutTimer.current);
+          lockoutTimer.current = null;
+          setError('');
+          return 0;
+        }
+        const next = prev - 1;
+        const mm = String(Math.floor(next / 60)).padStart(2, '0');
+        const ss = String(next % 60).padStart(2, '0');
+        setError(`Troppi tentativi falliti. Riprova tra ${mm}:${ss}`);
+        return next;
+      });
+    }, 1000);
+    return () => { if (lockoutTimer.current) clearInterval(lockoutTimer.current); };
+  }, [lockoutSeconds > 0]); // re-trigger only on transition 0→positive
 
   const getStrength = (pwd) => {
     if (!pwd) return { label: '', color: 'bg-white/10', pct: 0, segments: 0 };
@@ -122,6 +144,7 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (lockoutSeconds > 0) return; // bloccato dal countdown
     setError('');
 
     if (isNew) {
@@ -158,7 +181,15 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
 
         onUnlock();
       } else {
-        setError(result.error || 'Password errata');
+        if (result.locked && result.remaining) {
+          const secs = Math.ceil(Number(result.remaining));
+          setLockoutSeconds(secs);
+          const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+          const ss = String(secs % 60).padStart(2, '0');
+          setError(`Troppi tentativi falliti. Riprova tra ${mm}:${ss}`);
+        } else {
+          setError(result.error || 'Password errata');
+        }
         setLoading(false);
       }
     } catch (err) {
@@ -364,21 +395,30 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
           </div>
 
           {error && (
-            <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl flex items-center gap-2 animate-shake">
-              <ShieldAlert size={16} className="text-red-500 flex-shrink-0" />
-              <p className="text-red-500 text-[11px] font-semibold leading-tight">{error}</p>
+            <div className={`${lockoutSeconds > 0 ? 'bg-amber-500/10 border-amber-500/20' : 'bg-red-500/10 border-red-500/20'} border p-3 rounded-xl flex items-center gap-2 animate-shake`}>
+              {lockoutSeconds > 0 ? (
+                <Timer size={16} className="text-amber-500 flex-shrink-0 animate-pulse" />
+              ) : (
+                <ShieldAlert size={16} className="text-red-500 flex-shrink-0" />
+              )}
+              <p className={`${lockoutSeconds > 0 ? 'text-amber-500' : 'text-red-500'} text-[11px] font-semibold leading-tight`}>{error}</p>
             </div>
           )}
 
           <button 
             type="submit" 
-            disabled={loading} 
-            className="btn-primary w-full py-4 rounded-2xl justify-center font-bold text-sm tracking-widest shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+            disabled={loading || lockoutSeconds > 0} 
+            className="btn-primary w-full py-4 rounded-2xl justify-center font-bold text-sm tracking-widest shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
           >
             {loading ? (
               <span className="flex items-center gap-3">
                 <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
                 <span className="uppercase">{loadingText}</span>
+              </span>
+            ) : lockoutSeconds > 0 ? (
+              <span className="flex items-center gap-3 opacity-60">
+                <Timer size={18} className="animate-pulse" />
+                <span className="uppercase">Bloccato {String(Math.floor(lockoutSeconds / 60)).padStart(2, '0')}:{String(lockoutSeconds % 60).padStart(2, '0')}</span>
               </span>
             ) : (
               <span className="uppercase">{isNew ? 'Crea il mio Studio Digitale' : 'Accedi al Vault'}</span>

@@ -1,8 +1,8 @@
 {
   "name": "lexflow",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "LexFlow — Gestionale Studio Legale con Crittografia Zero-Knowledge",
-  "author": "TechnoJaw",
+  "author": "Pietro Longo",
   "private": true,
   "scripts": {
     "tauri": "npx @tauri-apps/cli",

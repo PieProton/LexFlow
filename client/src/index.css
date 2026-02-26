@@ -14,9 +14,9 @@
   --color-primary-soft: rgba(212,169,64,0.12);
   --color-primary-glow: rgba(212,169,64,0.25);
 
-  --color-text: #e2e4ef;
-  --color-text-muted: #7c8099;
-  --color-text-dim: #4e5270;
+  --color-text: #e8eaf4;
+  --color-text-muted: #9ea2b8;
+  --color-text-dim: #727896;
 
   --color-success: #34d399;
   --color-warning: #fbbf24;
@@ -36,10 +36,10 @@
     --bg-card-hover: #1a1c2a;
     --bg-input: #181a26;
     --bg-surface: #161822;
-    --text: #e2e4ef;
-    --text-muted: #7c8099;
-    --text-dim: #4e5270;
-    --border: #22263a;
+    --text: #e8eaf4;
+    --text-muted: #9ea2b8;
+    --text-dim: #727896;
+    --border: #2d3250;
     --success: #34d399;
     --warning: #fbbf24;
     --danger: #f87171;
@@ -161,6 +161,7 @@
     font-size: 13px;
     font-family: inherit;
     transition: border-color var(--transition);
+    caret-color: var(--primary);
   }
   .input-field:focus { outline: none; border-color: var(--primary); }
   .input-field::placeholder { color: var(--text-dim); }
@@ -271,7 +272,7 @@
   }
 }
 
-/* ========== ANIMATIONS — TechnoJaw Style ========== */
+/* ========== ANIMATIONS ========== */
 
 /* ── Timing Variables ── */
 :root {

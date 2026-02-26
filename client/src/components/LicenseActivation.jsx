@@ -23,14 +23,25 @@ export default function LicenseActivation({ children }) {
   const [toast, setToast] = useState(null); // { type: 'success'|'error', text, detail? }
   const [showKey, setShowKey] = useState(false);
   const [shakeInput, setShakeInput] = useState(false);
+  const [lockoutSeconds, setLockoutSeconds] = useState(0); // countdown brute-force
   const inputRef = useRef(null);
   const toastTimer = useRef(null);
+  const lockoutTimer = useRef(null);
 
   // ── Check iniziale ────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       try {
         const status = await invoke('check_license');
+        if (status.tampered) {
+          setToast({
+            type: 'error',
+            text: 'Manomissione rilevata',
+            detail: status.reason || 'File di licenza rimosso. Contattare il supporto.',
+          });
+          setIsActivated(false);
+          return;
+        }
         setIsActivated(!!status.activated);
       } catch {
         setIsActivated(false);
@@ -42,10 +53,39 @@ export default function LicenseActivation({ children }) {
   useEffect(() => {
     if (toast) {
       clearTimeout(toastTimer.current);
+      // Non auto-chiudere il toast di lockout — resta finché il countdown è attivo
+      if (lockoutSeconds > 0) return;
       toastTimer.current = setTimeout(() => setToast(null), toast.type === 'success' ? 2500 : 5000);
     }
     return () => clearTimeout(toastTimer.current);
-  }, [toast]);
+  }, [toast, lockoutSeconds]);
+
+  // ── Lockout countdown ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (lockoutSeconds <= 0) {
+      clearInterval(lockoutTimer.current);
+      return;
+    }
+    // Aggiorna il toast con il countdown formattato ogni tick
+    const mm = String(Math.floor(lockoutSeconds / 60)).padStart(2, '0');
+    const ss = String(lockoutSeconds % 60).padStart(2, '0');
+    setToast(prev => prev ? {
+      ...prev,
+      detail: `Troppi tentativi falliti. Riprova tra ${mm}:${ss}`,
+    } : prev);
+
+    lockoutTimer.current = setInterval(() => {
+      setLockoutSeconds(prev => {
+        if (prev <= 1) {
+          clearInterval(lockoutTimer.current);
+          setToast(null);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(lockoutTimer.current);
+  }, [lockoutSeconds]); // aggiorna ogni secondo
 
   // ── Sanitizza input ───────────────────────────────────────────────────────
   function handleInputChange(e) {
@@ -67,6 +107,7 @@ export default function LicenseActivation({ children }) {
   // ── Attivazione ───────────────────────────────────────────────────────────
   async function handleActivate(e) {
     if (e) e.preventDefault();
+    if (lockoutSeconds > 0) return; // bloccato — countdown in corso
     const key = license.trim();
 
     if (!key) {
@@ -96,13 +137,23 @@ export default function LicenseActivation({ children }) {
         setTimeout(() => setIsActivated(true), 1800);
       } else {
         if (response.locked) {
+          const secs = Math.max(1, Math.round(response.remaining || 300));
+          setLockoutSeconds(secs);
+          const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+          const ss = String(secs % 60).padStart(2, '0');
           setToast({
             type: 'error',
             text: 'Account temporaneamente bloccato',
-            detail: `Troppi tentativi falliti. Riprova tra ${response.remaining} secondi.`,
+            detail: `Troppi tentativi falliti. Riprova tra ${mm}:${ss}`,
           });
         } else {
-          setToast({ type: 'error', text: response.error || 'Chiave non valida o scaduta.' });
+          const errMsg = response.error || 'Chiave non valida o scaduta.';
+          const isBurned = errMsg.includes('già stata utilizzata');
+          setToast({ 
+            type: 'error', 
+            text: isBurned ? '🔥 Chiave già utilizzata' : errMsg,
+            detail: isBurned ? 'Questa licenza è monouso e risulta già attivata. Non può essere riutilizzata su nessun dispositivo. Contatta il supporto per ottenere una nuova chiave.' : undefined,
+          });
           triggerShake();
         }
       }
@@ -196,7 +247,7 @@ export default function LicenseActivation({ children }) {
           <button
             className="lic-btn-activate"
             type="submit"
-            disabled={loading || !hasInput}
+            disabled={loading || !hasInput || lockoutSeconds > 0}
           >
             {loading ? (
               <>

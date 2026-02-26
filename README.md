@@ -2,9 +2,9 @@
 
 > Gestionale Studio Legale con Crittografia Zero-Knowledge
 
-**Versione:** 1.9.7  
-**Piattaforma:** Tauri v2 (macOS, Windows, iOS, Android)  
-**Bundle ID:** `com.technojaw.lexflow`
+**Versione:** 2.7.0  
+**Piattaforma:** Tauri v2 (macOS, Windows, Android)  
+**Bundle ID:** `com.pietrolongo.lexflow`
 
 ---
 

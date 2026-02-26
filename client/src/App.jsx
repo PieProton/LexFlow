@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Toaster } from 'react-hot-toast';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { Lock } from 'lucide-react';
@@ -53,9 +53,6 @@ export default function App() {
   const [settings, setSettings] = useState({});
   const [selectedId, setSelectedId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
-  // Ref invece di state per sentNotifications: evita re-render e ciclo infinito
-  // nell'effect delle notifiche (sentNotifications era nelle dipendenze → loop)
-  const sentNotificationsRef = useRef(new Set());
 
   // --- 1. INIZIALIZZAZIONE ---
   useEffect(() => {
@@ -109,70 +106,22 @@ export default function App() {
     };
   }, [isLocked]);
 
-  // --- 2. LOGICA NOTIFICHE DI SISTEMA (Monitoraggio Attivo) ---
-  useEffect(() => {
-    // Non controllare se l'app è bloccata o le notifiche sono disattivate
-    if (isLocked || settings.notifyEnabled === false) return;
-
-    const checkAndNotify = () => {
-      const now = new Date();
-      // Preavviso in millisecondi (default 30 min se non impostato)
-      const leadTimeMs = (settings.notificationTime || 30) * 60 * 1000;
-
-      // A. Controllo Agenda
-      agendaEvents.forEach(event => {
-        if (event.completed || event.category === 'scadenza') return;
-
-        const eventTime = new Date(`${event.date}T${event.timeStart}`);
-        const diff = eventTime - now;
-
-        if (diff > 0 && diff <= leadTimeMs) {
-          const nId = `agenda-${event.id}`;
-          if (!sentNotificationsRef.current.has(nId)) {
-            window.api.sendNotification({
-              title: `📅 Impegno tra poco: ${event.title}`,
-              body: `L'evento inizierà alle ore ${event.timeStart}.`
-            });
-            sentNotificationsRef.current.add(nId);
-          }
-        }
-      });
-
-      // B. Controllo Scadenze Fascicoli
-      practices.forEach(p => {
-        if (p.status !== 'active') return;
-        (p.deadlines || []).forEach(d => {
-          const dDate = new Date(d.date);
-          const isToday = dDate.toDateString() === now.toDateString();
-
-          if (isToday) {
-            const nId = `deadline-${p.id}-${d.label}-${d.date}`;
-            if (!sentNotificationsRef.current.has(nId)) {
-              window.api.sendNotification({
-                title: `📋 Scadenza Oggi: ${d.label}`,
-                body: `Fascicolo: ${p.client} - Rif: ${p.code || 'N/D'}`
-              });
-              sentNotificationsRef.current.add(nId);
-            }
-          }
-        });
-      });
-    };
-
-    // Controllo ogni 60 secondi
-    const interval = setInterval(checkAndNotify, 60000);
-    checkAndNotify(); // Primo controllo immediato allo sblocco
-
-    return () => clearInterval(interval);
-  // sentNotificationsRef è una ref stabile — non va nelle dipendenze (evita loop)
-  }, [isLocked, practices, agendaEvents, settings]);
+  // --- 2. LOGICA NOTIFICHE DI SISTEMA ---
+  // Le notifiche sono gestite ESCLUSIVAMENTE dal backend Rust (start_notification_scheduler).
+  // Il backend legge il file notif-schedule cifrato ogni 60s, controlla la finestra temporale
+  // (epoch-based, catchup dopo sleep/wake) e emette "show-notification" al frontend.
+  // NON serve un secondo poller qui nel React — causerebbe notifiche doppie/triple
+  // perché send_notification() nativo + show-notification event + backend scheduler
+  // scatterebbero tutti per lo stesso evento.
+  //
+  // Il sync avviene tramite saveAgenda() → syncNotificationSchedule() che scrive
+  // gli items + briefingTimes nel file cifrato letto dal backend.
 
   // --- 3. GESTIONE SICUREZZA (BLUR & LOCK) ---
   const handleLockLocal = useCallback((isAuto = false) => {
     setBlurred(false);
     setPractices([]); 
     setAgendaEvents([]);
-    sentNotificationsRef.current = new Set();
     setSelectedId(null);
     setAutoLocked(isAuto); // memorizza se è autolock
     setIsLocked(true);
@@ -256,6 +205,36 @@ export default function App() {
       setAgendaEvents(synced);
       
       await window.api.saveAgenda(synced);
+
+      // Sync schedule al backend subito dopo il load — così lo scheduler Rust
+      // ha dati freschi immediatamente (events + deadlines + briefing times)
+      if (window.api?.syncNotificationSchedule) {
+        const agendaItems = synced
+          .filter(e => !e.completed && e.timeStart)
+          .map(e => ({
+            id: e.id, date: e.date, time: e.timeStart, title: e.title,
+            // FIX: remindMinutes can be the string "custom" from UI — coerce to integer.
+            // When "custom", use 0 (the actual fire time comes from customRemindTime).
+            remindMinutes: (typeof e.remindMinutes === 'number') ? e.remindMinutes
+              : (e.remindMinutes === 'custom' ? 0 : (parseInt(e.remindMinutes, 10) || (currentSettings?.preavviso || 30))),
+            customRemindTime: e.customRemindTime || null,
+          }));
+        const deadlineItems = [];
+        pracs.filter(p => p.status === 'active').forEach(p => {
+          (p.deadlines || []).forEach(d => {
+            deadlineItems.push({
+              id: `deadline-${p.id}-${d.date}`, date: d.date, time: '09:00',
+              title: `Scadenza: ${d.label} — ${p.client}`, remindMinutes: 0,
+            });
+          });
+        });
+        const briefingTimes = [
+          currentSettings?.briefingMattina || '08:30',
+          currentSettings?.briefingPomeriggio || '14:30',
+          currentSettings?.briefingSera || '19:30',
+        ];
+        await window.api.syncNotificationSchedule({ briefingTimes, items: [...agendaItems, ...deadlineItems] });
+      }
     } catch (e) { 
       console.error("Errore caricamento dati:", e); 
     }
@@ -266,6 +245,17 @@ export default function App() {
     setAutoLocked(false);
     setIsLocked(false);
     await loadAllData();
+
+    // Request notification permission on first unlock (macOS requires explicit grant)
+    try {
+      const notifAPI = window.__TAURI__?.notification;
+      if (notifAPI) {
+        const granted = await notifAPI.isPermissionGranted();
+        if (!granted) {
+          await notifAPI.requestPermission();
+        }
+      }
+    } catch (e) { /* ignore — notification permission is non-critical */ }
   };
 
   // E2E bypass: when testing, make it easy to skip the login gate.
@@ -289,12 +279,55 @@ export default function App() {
       const synced = syncDeadlinesToAgenda(newList, agendaEvents);
       setAgendaEvents(synced);
       await window.api.saveAgenda(synced);
+      // Sync schedule col backend (include scadenze fascicoli aggiornate)
+      syncScheduleToBackend(synced, newList);
     }
   };
 
   const saveAgenda = async (newEvents) => {
     setAgendaEvents(newEvents);
     if (window.api?.saveAgenda) await window.api.saveAgenda(newEvents);
+    // Sync notification schedule with updated items for backend scheduler
+    syncScheduleToBackend(newEvents, practices);
+  };
+
+  // Centralizza il sync dello schedule verso il backend Rust scheduler
+  const syncScheduleToBackend = async (events, pList) => {
+    if (!window.api?.syncNotificationSchedule) return;
+    // A. Eventi agenda
+    const agendaItems = (events || [])
+      .filter(e => !e.completed && e.timeStart)
+      .map(e => ({
+        id: e.id,
+        date: e.date,
+        time: e.timeStart,
+        title: e.title,
+        // FIX: remindMinutes can be the string "custom" from UI — coerce to integer.
+        // When "custom", use 0 (the actual fire time comes from customRemindTime).
+        remindMinutes: (typeof e.remindMinutes === 'number') ? e.remindMinutes
+          : (e.remindMinutes === 'custom' ? 0 : (parseInt(e.remindMinutes, 10) || (settings?.preavviso || 30))),
+        customRemindTime: e.customRemindTime || null,
+      }));
+    // B. Scadenze fascicoli attivi (notifica alle 09:00 del giorno della scadenza)
+    const deadlineItems = [];
+    (pList || []).filter(p => p.status === 'active').forEach(p => {
+      (p.deadlines || []).forEach(d => {
+        deadlineItems.push({
+          id: `deadline-${p.id}-${d.date}`,
+          date: d.date,
+          time: '09:00',
+          title: `Scadenza: ${d.label} — ${p.client}`,
+          remindMinutes: 0, // notify at 09:00 sharp
+        });
+      });
+    });
+    const items = [...agendaItems, ...deadlineItems];
+    const briefingTimes = [
+      settings?.briefingMattina || '08:30',
+      settings?.briefingPomeriggio || '14:30',
+      settings?.briefingSera || '19:30',
+    ];
+    await window.api.syncNotificationSchedule({ briefingTimes, items });
   };
 
   const handleSelectPractice = (id) => {
@@ -375,7 +408,10 @@ export default function App() {
               },
               success: {
                 duration: 3500,
-                icon: '✅'
+                icon: null,
+                style: {
+                  borderLeft: '3px solid #22c55e',
+                }
               },
               error: {
                 duration: 6000,
@@ -419,7 +455,7 @@ export default function App() {
               } />
               
               <Route path="/scadenze" element={
-                <DeadlinesPage practices={practices} onSelectPractice={handleSelectPractice} settings={settings} />
+                <DeadlinesPage practices={practices} onSelectPractice={handleSelectPractice} settings={settings} agendaEvents={agendaEvents} onNavigate={navigate} />
               } />
               
               <Route path="/agenda" element={

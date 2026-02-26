@@ -12,7 +12,9 @@ import {
   AlertCircle, 
   BarChart3,
   Bell,
-  BellRing
+  BellRing,
+  Briefcase,
+  Check
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -38,7 +40,7 @@ const CAT_LABELS = {
   altro: 'Altro',
 };
 
-const HOURS = Array.from({length: 17}, (_, i) => i + 7); // 07:00 - 23:00
+const HOURS = Array.from({length: 24}, (_, i) => i); // 00:00 - 23:00
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).substring(2, 7); }
 function toDateStr(d) { return d.toISOString().split('T')[0]; }
@@ -64,14 +66,47 @@ function EmptyState({ message, sub, onAdd, date }) {
 }
 
 // --- Componente Modal ---
-function EventModal({ event, date, onSave, onDelete, onClose }) {
+function EventModal({ event, date, onSave, onDelete, onClose, practices }) {
   const isEdit = !!event?.id;
+  // Dynamic default: next half-hour from now
+  const defaultTime = (() => {
+    if (event?.timeStart) return event.timeStart;
+    const n = new Date();
+    let m = n.getMinutes();
+    let h = n.getHours();
+    m = m < 30 ? 30 : 0;
+    if (m === 0) h = (h + 1) % 24;
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  })();
+  const defaultEndTime = (() => {
+    if (event?.timeEnd) return event.timeEnd;
+    const [h, m] = defaultTime.split(':').map(Number);
+    const eh = (h + 1) % 24;
+    return `${String(eh).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  })();
   const [title, setTitle] = useState(event?.title || '');
   const [evDate, setEvDate] = useState(event?.date || date || toDateStr(new Date()));
-  const [timeStart, setTimeStart] = useState(event?.timeStart || '09:00');
-  const [timeEnd, setTimeEnd] = useState(event?.timeEnd || '10:00');
+  const [timeStart, setTimeStart] = useState(defaultTime);
+  const [timeEnd, setTimeEnd] = useState(defaultEndTime);
   const [category, setCategory] = useState(event?.category || 'udienza');
   const [notes, setNotes] = useState(event?.notes || '');
+  const [remindMinutes, setRemindMinutes] = useState(event?.remindMinutes ?? null);
+  const [customRemindTime, setCustomRemindTime] = useState(event?.customRemindTime || '');
+  const [practiceId, setPracticeId] = useState(event?.practiceId || '');
+
+  const REMIND_OPTIONS = [
+    { value: null, label: 'Standard' },
+    { value: 5, label: '5 min' },
+    { value: 10, label: '10 min' },
+    { value: 15, label: '15 min' },
+    { value: 30, label: '30 min' },
+    { value: 60, label: '1 ora' },
+    { value: 120, label: '2 ore' },
+    { value: 1440, label: '1 giorno' },
+  ];
+
+  // Only show linkable practices (active)
+  const linkablePractices = (practices || []).filter(p => p.status === 'active');
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -84,9 +119,11 @@ function EventModal({ event, date, onSave, onDelete, onClose }) {
       timeEnd,
       category,
       notes,
+      remindMinutes,
+      customRemindTime: remindMinutes === 'custom' ? customRemindTime : null,
       completed: event?.completed || false,
       autoSync: event?.autoSync || false,
-      practiceId: event?.practiceId || null,
+      practiceId: practiceId || null,
     });
   };
 
@@ -142,6 +179,65 @@ function EventModal({ event, date, onSave, onDelete, onClose }) {
 
           <textarea className="input-field bg-black/20 border-white/5" placeholder="Note aggiuntive..." rows={3} value={notes} onChange={e => setNotes(e.target.value)} />
 
+          {/* Preavviso personalizzato per evento */}
+          <div>
+            <label className="text-[10px] font-bold text-text-dim uppercase mb-2 block">Preavviso Notifica</label>
+            <div className="flex flex-wrap gap-1.5 items-center">
+              {REMIND_OPTIONS.map(opt => (
+                <button key={String(opt.value)} type="button"
+                  onClick={() => { setRemindMinutes(opt.value); }}
+                  className={`px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-all border ${
+                    remindMinutes === opt.value
+                      ? 'bg-primary text-black border-primary shadow-[0_0_10px_rgba(212,169,64,0.25)]'
+                      : 'bg-white/[0.04] text-text-muted border-white/5 hover:bg-white/[0.08] hover:text-white'
+                  }`}>
+                  {opt.label}
+                </button>
+              ))}
+              {/* Pill orario personalizzato — inline */}
+              <div className={`inline-flex items-center rounded-lg border transition-all ${
+                remindMinutes === 'custom'
+                  ? 'border-primary bg-primary/10 shadow-[0_0_10px_rgba(212,169,64,0.25)]'
+                  : 'border-white/5 bg-white/[0.04] hover:bg-white/[0.08]'
+              }`}>
+                <button type="button"
+                  onClick={() => setRemindMinutes('custom')}
+                  className={`px-2 py-1.5 text-[10px] font-semibold transition-colors ${
+                    remindMinutes === 'custom' ? 'text-primary' : 'text-text-muted hover:text-white'
+                  }`}>
+                  Alle
+                </button>
+                <input
+                  type="time"
+                  value={customRemindTime}
+                  onFocus={() => setRemindMinutes('custom')}
+                  onChange={e => { setCustomRemindTime(e.target.value); setRemindMinutes('custom'); }}
+                  className="bg-transparent border-none outline-none text-[10px] font-mono text-white w-[52px] py-1.5 pr-2 focus:ring-0"
+                />
+              </div>
+            </div>
+            <p className="text-[9px] text-text-dim mt-1.5">«Standard» usa il preavviso globale. «Alle» invia la notifica all'orario preciso scelto.</p>
+          </div>
+
+          {/* Collegamento a fascicolo */}
+          {linkablePractices.length > 0 && (
+            <div>
+              <label className="text-[10px] font-bold text-text-dim uppercase mb-1.5 block">Collega a Fascicolo</label>
+              <select
+                value={practiceId}
+                onChange={e => setPracticeId(e.target.value)}
+                className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:border-primary/50 focus:ring-1 focus:ring-primary/20 outline-none transition-all appearance-none"
+              >
+                <option value="">— Nessun fascicolo —</option>
+                {linkablePractices.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.client} — {p.object}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="flex items-center gap-3 pt-2">
             <button type="submit" className="btn-primary flex-1 py-2.5 text-sm">{isEdit ? 'Salva Modifiche' : 'Crea Impegno'}</button>
             {isEdit && !event?.autoSync && (
@@ -179,7 +275,6 @@ function StatsCard({ events }) {
   return (
     <div className="space-y-4 animate-slide-up">
       <div className="glass-card p-5 relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-4 opacity-10"><BarChart3 size={60} /></div>
         <div className="flex items-center gap-5 relative z-10">
           <div className="relative flex-shrink-0">
             <svg width={72} height={72} className="transform -rotate-90">
@@ -295,7 +390,7 @@ function UpcomingPanel({ events, onEdit, onToggle }) {
 }
 
 // --- Vista Oggi ---
-function TodayView({ events, onToggle, onEdit, onAdd, activeFilters }) {
+function TodayView({ events, onToggle, onEdit, onAdd, onSave, activeFilters }) {
   const now = new Date();
   const todayStr = toDateStr(now);
   const allToday = events.filter(e => e.date === todayStr).sort((a,b) => a.timeStart.localeCompare(b.timeStart));
@@ -305,7 +400,7 @@ function TodayView({ events, onToggle, onEdit, onAdd, activeFilters }) {
   useEffect(() => {
     if (timelineRef.current) {
       const nowMin = now.getHours() * 60 + now.getMinutes();
-      const scrollTo = Math.max(0, ((nowMin - 7*60) / 60) * 60 - 150);
+      const scrollTo = Math.max(0, (nowMin / 60) * 60 - 150);
       timelineRef.current.scrollTop = scrollTo;
     }
   }, []);
@@ -346,53 +441,181 @@ function TodayView({ events, onToggle, onEdit, onAdd, activeFilters }) {
                   ))}
                   {(() => {
                     const nowMin = now.getHours() * 60 + now.getMinutes();
-                    if (nowMin >= 7*60 && nowMin <= 23*60) {
-                      const top = ((nowMin - 7*60) / 60) * 60;
-                      return (
-                          <div className="absolute left-14 right-0 z-30 flex items-center" style={{top}}>
-                             <div className="text-[9px] font-bold text-primary w-10 text-right pr-2 -ml-12">{fmtTime(now.getHours(), now.getMinutes())}</div>
-                             <div className="flex-1 border-t border-primary relative">
-                               <div className="absolute -left-1 -top-1 w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_var(--primary)]" />
-                             </div>
-                          </div>
-                      );
-                    }
-                    return null;
-                  })()}
-                  {todayEvts.map(ev => {
-                    const [sh,sm] = ev.timeStart.split(':').map(Number);
-                    const [eh,em] = ev.timeEnd.split(':').map(Number);
-                    const startMin = sh*60+sm, endMin = eh*60+em;
-                    const top = ((startMin - 7*60) / 60) * 60;
-                    const height = Math.max(((endMin - startMin) / 60) * 60, 32);
-                    const isSpecial = ev.category === 'udienza' || ev.category === 'scadenza';
+                    const top = (nowMin / 60) * 60;
                     return (
-                      <div key={ev.id} onClick={() => onEdit(ev)}
-                        className={`agenda-event absolute left-14 right-2 rounded-lg px-3 py-1.5 cursor-pointer transition-all duration-200 hover:scale-[1.01] hover:z-10
-                            ${ev.category === 'udienza' ? 'bg-[#d4a940]/20 border-l-4 border-[#d4a940]' : ''}
-                            ${ev.category === 'scadenza' ? 'bg-[#EF6B6B]/20 border-l-4 border-[#EF6B6B]' : ''}
-                            ${!isSpecial ? 'bg-white/[0.08] hover:bg-white/[0.12] border-l-4 border-white/20' : ''}
-                            ${ev.completed ? 'opacity-50 grayscale' : ''}
-                        `}
-                        style={{
-                            top, height: height, 
-                            borderLeftColor: CAT_COLORS[ev.category]
-                        }}>
-                        <div className="flex justify-between items-start">
-                             <div className="min-w-0">
-                                <div className="flex items-center gap-1.5">
-                                    <span className="text-xs font-bold text-white truncate">{ev.title}</span>
-                                    {ev.autoSync && <ExternalLink size={10} className="text-white/70" />}
-                                </div>
-                                {height >= 45 && (
-                                    <p className="text-[10px] text-white/60 mt-0.5 truncate">{ev.notes || ev.category.toUpperCase()}</p>
-                                )}
-                             </div>
-                             <span className="text-[10px] font-mono text-white/80 bg-black/20 px-1.5 py-0.5 rounded flex-shrink-0">{ev.timeStart}</span>
+                        <div className="absolute left-14 right-0 z-30 flex items-center" style={{top}}>
+                           <div className="text-[9px] font-bold text-primary w-10 text-right pr-2 -ml-12">{fmtTime(now.getHours(), now.getMinutes())}</div>
+                           <div className="flex-1 border-t border-primary relative">
+                             <div className="absolute -left-1 -top-1 w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_var(--primary)]" />
+                           </div>
                         </div>
-                      </div>
                     );
-                  })}
+                  })()}
+                  {(() => {
+                    // ── Overlap layout: assign columns to overlapping events ──
+                    const positioned = todayEvts.map(ev => {
+                      const [sh,sm] = ev.timeStart.split(':').map(Number);
+                      const [eh,em] = ev.timeEnd.split(':').map(Number);
+                      return { ...ev, startMin: sh*60+sm, endMin: eh*60+em };
+                    }).sort((a,b) => a.startMin - b.startMin || a.endMin - b.endMin);
+
+                    // Greedy column assignment
+                    const columns = []; // array of { endMin, col }
+                    const layout = positioned.map(ev => {
+                      // Find first column where event doesn't overlap
+                      let col = 0;
+                      for (let c = 0; c < columns.length; c++) {
+                        if (columns[c] <= ev.startMin) { col = c; columns[c] = ev.endMin; break; }
+                        col = c + 1;
+                      }
+                      if (col >= columns.length) columns.push(ev.endMin);
+                      else columns[col] = Math.max(columns[col], ev.endMin);
+                      return { ...ev, col };
+                    });
+
+                    // Calculate total columns for each overlap group
+                    const totalCols = columns.length || 1;
+
+                    return layout.map(ev => {
+                      const top = (ev.startMin / 60) * 60;
+                      const height = Math.max(((ev.endMin - ev.startMin) / 60) * 60, 32);
+                      const isSpecial = ev.category === 'udienza' || ev.category === 'scadenza';
+                      const colWidth = totalCols > 1 ? `calc((100% - 56px - 8px) / ${totalCols})` : undefined;
+                      const colLeft = totalCols > 1 ? `calc(56px + ${ev.col} * ((100% - 56px - 8px) / ${totalCols}))` : undefined;
+                      return (
+                        <div key={ev.id} data-evid={ev.id}
+                          onClick={e => {
+                            // Non aprire edit se abbiamo appena draggato
+                            if (e.currentTarget._didDrag) { e.currentTarget._didDrag = false; return; }
+                            onEdit(ev);
+                          }}
+                          className={`agenda-event absolute rounded-lg px-3 py-1.5 cursor-grab transition-all duration-200 hover:scale-[1.01] hover:z-20
+                              ${ev.category === 'udienza' ? 'bg-[#d4a940]/20 border-l-4 border-[#d4a940]' : ''}
+                              ${ev.category === 'scadenza' ? 'bg-[#EF6B6B]/20 border-l-4 border-[#EF6B6B]' : ''}
+                              ${!isSpecial ? 'bg-white/[0.08] hover:bg-white/[0.12] border-l-4 border-white/20' : ''}
+                              ${ev.completed ? 'opacity-40 line-through' : ''}
+                          `}
+                          style={{
+                              top, height,
+                              left: colLeft || 56,
+                              right: totalCols > 1 ? 'auto' : 8,
+                              width: colWidth || undefined,
+                              borderLeftColor: CAT_COLORS[ev.category],
+                              zIndex: ev.col + 1,
+                          }}
+                          onMouseDown={e => {
+                            // Drag verticale per spostare l'evento (cambio orario)
+                            if (e.target.closest('.resize-handle') || e.target.closest('button')) return;
+                            const startY = e.clientY;
+                            const origStart = ev.startMin;
+                            const duration = ev.endMin - ev.startMin;
+                            const el = e.currentTarget;
+                            let moved = false;
+                            let newStart = origStart;
+                            const onMove = (me) => {
+                              const deltaY = me.clientY - startY;
+                              if (!moved && Math.abs(deltaY) < 4) return; // deadzone
+                              if (!moved) {
+                                moved = true;
+                                el.style.zIndex = 50;
+                                el.style.opacity = '0.8';
+                                el.style.transition = 'none';
+                                el.style.cursor = 'grabbing';
+                              }
+                              const deltaMin = Math.round(deltaY / 1); // 1px = 1min
+                              newStart = Math.max(0, Math.min(origStart + deltaMin, 1440 - duration));
+                              // Snap a 5 minuti
+                              newStart = Math.round(newStart / 5) * 5;
+                              el.style.top = `${(newStart / 60) * 60}px`;
+                            };
+                            const onUp = () => {
+                              document.removeEventListener('mousemove', onMove);
+                              document.removeEventListener('mouseup', onUp);
+                              el.style.zIndex = '';
+                              el.style.opacity = '';
+                              el.style.transition = '';
+                              el.style.cursor = '';
+                              if (moved) {
+                                el._didDrag = true;
+                                if (newStart !== origStart) {
+                                  const sh = Math.floor(newStart / 60);
+                                  const sm = newStart % 60;
+                                  const newEnd = newStart + duration;
+                                  const eh = Math.floor(newEnd / 60);
+                                  const em = newEnd % 60;
+                                  onSave({ ...ev, timeStart: fmtTime(sh, sm), timeEnd: fmtTime(eh, em) });
+                                }
+                              }
+                            };
+                            document.addEventListener('mousemove', onMove);
+                            document.addEventListener('mouseup', onUp);
+                          }}
+                        >
+                          <div className="flex justify-between items-start h-full">
+                               <div className="flex items-start gap-2 min-w-0 flex-1">
+                                  {/* Checkbox completamento */}
+                                  <button
+                                    onClick={e => { e.stopPropagation(); onToggle(ev.id); }}
+                                    className={`w-4 h-4 mt-0.5 rounded border flex-shrink-0 flex items-center justify-center transition-all ${
+                                      ev.completed
+                                        ? 'bg-green-500 border-green-500'
+                                        : 'border-white/30 hover:border-primary hover:bg-primary/10'
+                                    }`}
+                                  >
+                                    {ev.completed && <Check size={10} className="text-white" strokeWidth={3} />}
+                                  </button>
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className={`text-xs font-bold truncate ${ev.completed ? 'text-white/50' : 'text-white'}`}>{ev.title}</span>
+                                        {ev.remindMinutes != null && <BellRing size={10} className="text-amber-400 flex-shrink-0" title={ev.remindMinutes === 'custom' ? `Notifica alle ${ev.customRemindTime || '?'}` : `Preavviso: ${ev.remindMinutes} min`} />}
+                                        {ev.autoSync && <ExternalLink size={10} className="text-white/70" />}
+                                        {ev.practiceId && !ev.autoSync && <Briefcase size={10} className="text-primary/70" />}
+                                    </div>
+                                    {height >= 45 && (
+                                        <p className="text-[10px] text-white/60 mt-0.5 truncate">{ev.notes || ev.category.toUpperCase()}</p>
+                                    )}
+                                  </div>
+                               </div>
+                               <span className="text-[10px] font-mono text-white/80 bg-black/20 px-1.5 py-0.5 rounded flex-shrink-0">{ev.timeStart}</span>
+                          </div>
+                          {/* Drag handle per ridimensionare (bottom edge) */}
+                          <div
+                            className="resize-handle absolute bottom-0 left-0 right-0 h-2 cursor-ns-resize group/resize"
+                            onMouseDown={e => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              const startY = e.clientY;
+                              const origEnd = ev.endMin;
+                              const evEl = e.target.closest('[data-evid]');
+                              let newEnd = origEnd;
+                              const onMove = (me) => {
+                                const deltaY = me.clientY - startY;
+                                const deltaMin = Math.round(deltaY / 1); // 1px = 1min
+                                newEnd = Math.max(origEnd + deltaMin, ev.startMin + 15);
+                                // Snap a 5 minuti
+                                newEnd = Math.round(newEnd / 5) * 5;
+                                if (evEl) evEl.style.height = `${Math.max(((newEnd - ev.startMin) / 60) * 60, 32)}px`;
+                              };
+                              const onUp = () => {
+                                document.removeEventListener('mousemove', onMove);
+                                document.removeEventListener('mouseup', onUp);
+                                if (evEl) evEl._didDrag = true;
+                                if (newEnd !== origEnd) {
+                                  const nh = Math.floor(newEnd / 60);
+                                  const nm = newEnd % 60;
+                                  onSave({ ...ev, timeEnd: fmtTime(nh, nm) });
+                                }
+                              };
+                              document.addEventListener('mousemove', onMove);
+                              document.addEventListener('mouseup', onUp);
+                            }}
+                          >
+                            <div className="mx-auto w-8 h-0.5 bg-white/10 group-hover/resize:bg-white/30 rounded-full mt-0.5 transition" />
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
              </div>
          )}
@@ -402,7 +625,7 @@ function TodayView({ events, onToggle, onEdit, onAdd, activeFilters }) {
 }
 
 // --- Vista Settimana ---
-function WeekView({ events, onEdit, onAdd, activeFilters }) {
+function WeekView({ events, onEdit, onAdd, onSave, activeFilters }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const scrollRef = useRef(null);
   const now = new Date();
@@ -447,7 +670,7 @@ function WeekView({ events, onEdit, onAdd, activeFilters }) {
           <div className="grid grid-cols-[50px_repeat(7,1fr)] relative" style={{height: HOURS.length * 60}}>
             <div className="relative border-r border-white/5 bg-black/20">
               {HOURS.map(h => (
-                <div key={h} className="absolute w-full text-right pr-2 text-[10px] text-text-dim font-medium" style={{top: (h-7)*60 + 5}}>
+                <div key={h} className="absolute w-full text-right pr-2 text-[10px] text-text-dim font-medium" style={{top: h*60 + 5}}>
                   {String(h).padStart(2,'0')}
                 </div>
               ))}
@@ -456,33 +679,133 @@ function WeekView({ events, onEdit, onAdd, activeFilters }) {
               const isToday = str === todayStr;
               const dayEvts = filtered.filter(e => e.date === str);
               return (
-                <div key={str} className={`relative border-r border-white/5 ${isToday ? 'bg-white/[0.02]' : ''}`}
+                <div key={str} data-daystr={str} className={`relative border-r border-white/5 ${isToday ? 'bg-white/[0.02]' : ''}`}
                     onClick={(e) => {
                        if (e.target.closest('.week-ev')) return;
                        const rect = e.currentTarget.getBoundingClientRect();
                        const y = e.clientY - rect.top + (scrollRef.current?.scrollTop || 0);
-                       const rawMin = Math.round((y / 60) * 60) + 7*60;
+                       const rawMin = Math.round((y / 60) * 60);
                        const startH = Math.floor(rawMin/60); 
                        onAdd(str, fmtTime(startH, 0), fmtTime(Math.min(startH+1,23), 0));
                     }}>
-                  {HOURS.map(h => (<div key={h} className="absolute w-full border-t border-white/[0.03]" style={{top: (h-7)*60, height: 60}}/>))}
+                  {HOURS.map(h => (<div key={h} className="absolute w-full border-t border-white/[0.03]" style={{top: h*60, height: 60}}/>))}
                   {dayEvts.map(ev => {
                     const [sh,sm] = ev.timeStart.split(':').map(Number);
                     const [eh,em] = ev.timeEnd.split(':').map(Number);
-                    const top = ((sh*60+sm-7*60)/60)*60;
+                    const top = ((sh*60+sm)/60)*60;
                     const height = Math.max(((eh*60+em-sh*60-sm)/60)*60, 20);
                     const isUdienza = ev.category === 'udienza';
                     return (
-                      <div key={ev.id} className="week-ev agenda-event absolute left-0.5 right-0.5 rounded px-1.5 py-0.5 cursor-pointer text-white overflow-hidden"
+                      <div key={ev.id} className="week-ev agenda-event absolute left-0.5 right-0.5 rounded px-1.5 py-0.5 cursor-grab text-white overflow-hidden"
                         style={{
                             top, height, fontSize: 10,
                             background: isUdienza ? CAT_COLORS.udienza : `${CAT_COLORS[ev.category]}CC`,
                             borderLeft: `2px solid ${isUdienza ? '#fff' : 'rgba(255,255,255,0.3)'}`,
                             boxShadow: isUdienza ? '0 2px 8px rgba(212,169,64,0.3)' : 'none'
                         }}
-                        onClick={e => {e.stopPropagation(); onEdit(ev);}}>
-                        <div className="font-bold truncate leading-tight">{ev.title}</div>
+                        onClick={e => {
+                          e.stopPropagation();
+                          if (e.currentTarget._didDrag) { e.currentTarget._didDrag = false; return; }
+                          onEdit(ev);
+                        }}
+                        onMouseDown={e => {
+                          if (e.target.closest('.resize-handle') || e.target.closest('button')) return;
+                          const startX = e.clientX;
+                          const startY = e.clientY;
+                          const el = e.currentTarget;
+                          const dayCol = el.closest('[data-daystr]');
+                          const grid = el.closest('.grid');
+                          const [esh,esm] = ev.timeStart.split(':').map(Number);
+                          const [eeh,eem] = ev.timeEnd.split(':').map(Number);
+                          const origStartMin = esh*60+esm;
+                          const duration = eeh*60+eem - origStartMin;
+                          const origDate = ev.date;
+                          let moved = false;
+                          let newDate = origDate;
+                          let newStartMin = origStartMin;
+                          // Get all day columns for horizontal drag
+                          const dayCols = grid ? Array.from(grid.querySelectorAll('[data-daystr]')) : [];
+                          const onMove = (me) => {
+                            const dX = me.clientX - startX;
+                            const dY = me.clientY - startY;
+                            if (!moved && Math.abs(dX) < 4 && Math.abs(dY) < 4) return;
+                            if (!moved) {
+                              moved = true;
+                              el.style.zIndex = 50;
+                              el.style.opacity = '0.8';
+                              el.style.transition = 'none';
+                              el.style.cursor = 'grabbing';
+                            }
+                            // Vertical: change time
+                            const deltaMin = Math.round(dY / 1);
+                            newStartMin = Math.max(0, Math.min(origStartMin + deltaMin, 1440 - duration));
+                            newStartMin = Math.round(newStartMin / 5) * 5;
+                            el.style.top = `${(newStartMin / 60) * 60}px`;
+                            // Horizontal: detect which day column we're over
+                            for (const col of dayCols) {
+                              const r = col.getBoundingClientRect();
+                              if (me.clientX >= r.left && me.clientX <= r.right) {
+                                newDate = col.dataset.daystr;
+                                break;
+                              }
+                            }
+                          };
+                          const onUp = () => {
+                            document.removeEventListener('mousemove', onMove);
+                            document.removeEventListener('mouseup', onUp);
+                            el.style.zIndex = '';
+                            el.style.opacity = '';
+                            el.style.transition = '';
+                            el.style.cursor = '';
+                            if (moved) {
+                              el._didDrag = true;
+                              if (newStartMin !== origStartMin || newDate !== origDate) {
+                                const nsh = Math.floor(newStartMin / 60);
+                                const nsm = newStartMin % 60;
+                                const newEndMin = newStartMin + duration;
+                                const neh = Math.floor(newEndMin / 60);
+                                const nem = newEndMin % 60;
+                                onSave({ ...ev, date: newDate, timeStart: fmtTime(nsh, nsm), timeEnd: fmtTime(neh, nem) });
+                              }
+                            }
+                          };
+                          document.addEventListener('mousemove', onMove);
+                          document.addEventListener('mouseup', onUp);
+                        }}>
+                        <div className="font-bold truncate leading-tight flex items-center gap-1">{ev.title}{ev.remindMinutes != null && <BellRing size={8} className="text-amber-400 flex-shrink-0" />}</div>
                         {height >= 30 && <div className="opacity-80 text-[9px]">{ev.timeStart}</div>}
+                        {/* Resize handle bottom */}
+                        <div className="resize-handle absolute bottom-0 left-0 right-0 h-1.5 cursor-ns-resize"
+                          onMouseDown={e => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            const startY = e.clientY;
+                            const [reh,rem_] = ev.timeEnd.split(':').map(Number);
+                            const origEnd = reh*60+rem_;
+                            const [rsh,rsm] = ev.timeStart.split(':').map(Number);
+                            const evStartMin = rsh*60+rsm;
+                            const evEl = e.target.closest('.week-ev');
+                            let newEnd = origEnd;
+                            const onMove = (me) => {
+                              const dY = me.clientY - startY;
+                              newEnd = Math.max(origEnd + Math.round(dY/1), evStartMin + 15);
+                              newEnd = Math.round(newEnd / 5) * 5;
+                              if (evEl) evEl.style.height = `${Math.max(((newEnd - evStartMin)/60)*60, 20)}px`;
+                            };
+                            const onUp = () => {
+                              document.removeEventListener('mousemove', onMove);
+                              document.removeEventListener('mouseup', onUp);
+                              if (evEl) evEl._didDrag = true;
+                              if (newEnd !== origEnd) {
+                                const nh = Math.floor(newEnd/60);
+                                const nm = newEnd%60;
+                                onSave({ ...ev, timeEnd: fmtTime(nh, nm) });
+                              }
+                            };
+                            document.addEventListener('mousemove', onMove);
+                            document.addEventListener('mouseup', onUp);
+                          }}
+                        />
                       </div>
                     );
                   })}
@@ -562,7 +885,7 @@ function MonthView({ events, onEdit, onAdd, activeFilters }) {
 }
 
 // --- Popup Impostazioni Avvisi ---
-function NotificationSettingsPopup({ settings, onSave, onClose }) {
+function NotificationSettingsPopup({ settings, agendaEvents, onSave, onClose }) {
   const [notifyEnabled, setNotifyEnabled] = useState(settings?.notifyEnabled ?? true);
   const [preavviso, setPreavviso] = useState(settings?.preavviso ?? 30);
   const [briefingMattina, setBriefingMattina] = useState(settings?.briefingMattina ?? '08:30');
@@ -590,7 +913,19 @@ function NotificationSettingsPopup({ settings, onSave, onClose }) {
     };
     try {
       await window.api.saveSettings(updated);
-      await window.api.syncNotificationSchedule({ briefingMattina, briefingPomeriggio, briefingSera });
+      // Sync backend scheduler con formato corretto: briefingTimes (array) + items
+      const briefingTimes = [briefingMattina, briefingPomeriggio, briefingSera].filter(Boolean);
+      const items = (agendaEvents || [])
+        .filter(e => !e.completed && e.timeStart)
+        .map(e => ({
+          id: e.id,
+          date: e.date,
+          time: e.timeStart,
+          title: e.title,
+          remindMinutes: e.remindMinutes ?? (preavviso || 30),
+          customRemindTime: e.customRemindTime || null,
+        }));
+      await window.api.syncNotificationSchedule({ briefingTimes, items });
       onSave(updated);
       toast.success('Impostazioni avvisi salvate');
       onClose();
@@ -652,7 +987,7 @@ function NotificationSettingsPopup({ settings, onSave, onClose }) {
             </button>
           </div>
 
-          {/* Orari Briefing — Icone monocromatiche, design pulito */}
+          {/* Orari Briefing — Design pill coerente con preavviso evento */}
           <div>
             <label className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-3 block">Orari Briefing</label>
             <div className="space-y-2">
@@ -663,7 +998,10 @@ function NotificationSettingsPopup({ settings, onSave, onClose }) {
               ].map(({ label, value, onChange }) => (
                 <div key={label} className="flex items-center justify-between bg-white/[0.03] rounded-xl px-4 py-3 border border-white/5">
                   <span className="text-sm text-white font-medium">{label}</span>
-                  <input type="time" className="bg-black/30 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white font-mono text-center focus:border-primary/50 focus:ring-1 focus:ring-primary/20 outline-none transition-all w-24" value={value} onChange={e => onChange(e.target.value)} />
+                  <div className="inline-flex items-center rounded-lg border border-primary/30 bg-primary/10">
+                    <span className="px-2 py-1.5 text-[10px] font-semibold text-primary">Alle</span>
+                    <input type="time" className="bg-transparent border-none outline-none text-sm text-white font-mono w-[72px] py-1.5 pr-2.5 focus:ring-0" value={value} onChange={e => onChange(e.target.value)} />
+                  </div>
                 </div>
               ))}
             </div>
@@ -797,26 +1135,28 @@ export default function AgendaPage({ agendaEvents, onSaveAgenda, practices, onSe
       </div>
 
       {/* ═══ CONTENUTO PRINCIPALE ═══ */}
-      <div className={`flex-1 overflow-hidden grid gap-5 ${showStats ? 'grid-cols-[1fr_260px]' : 'grid-cols-1'}`} style={{ transition: 'grid-template-columns 0.3s' }}>
+      <div className={`flex-1 overflow-hidden grid gap-5 items-start ${showStats ? 'grid-cols-[1fr_260px]' : 'grid-cols-1'}`} style={{ transition: 'grid-template-columns 0.3s' }}>
         <div className="overflow-hidden h-full">
-          {view === 'today' && <TodayView events={events} onToggle={handleToggle} onEdit={openEdit} onAdd={openAdd} activeFilters={activeFilters} />}
-          {view === 'week' && <WeekView events={events} onEdit={openEdit} onAdd={openAdd} activeFilters={activeFilters} />}
+          {view === 'today' && <TodayView events={events} onToggle={handleToggle} onEdit={openEdit} onAdd={openAdd} onSave={handleSave} activeFilters={activeFilters} />}
+          {view === 'week' && <WeekView events={events} onEdit={openEdit} onAdd={openAdd} onSave={handleSave} activeFilters={activeFilters} />}
           {view === 'month' && <MonthView events={events} onEdit={openEdit} onAdd={openAdd} activeFilters={activeFilters} />}
         </div>
         
-        {/* Sidebar Destra — solo quando attivata */}
+        {/* Sidebar Destra — solo quando attivata, allineata in alto con l'agenda */}
         {showStats && (
-          <div className="space-y-4 overflow-y-auto no-scrollbar pr-1 animate-slide-up">
+          <div className="space-y-4 overflow-y-auto no-scrollbar pr-1 animate-slide-up self-start">
             <StatsCard events={events} />
             <UpcomingPanel events={events} onEdit={openEdit} onToggle={handleToggle} />
           </div>
         )}
       </div>
 
-      {modalEvent && <EventModal event={modalEvent.event} onSave={handleSave} onDelete={handleDelete} onClose={() => setModalEvent(null)} />}
+      {modalEvent && <EventModal event={modalEvent.event} onSave={handleSave} onDelete={handleDelete} onClose={() => setModalEvent(null)} practices={practices} />}
       {showNotifPopup && (
         <NotificationSettingsPopup 
-          settings={localSettings} 
+          key={`notif-${localSettings?.briefingMattina}-${localSettings?.briefingPomeriggio}-${localSettings?.briefingSera}`}
+          settings={localSettings}
+          agendaEvents={events}
           onSave={(s) => setLocalSettings(s)} 
           onClose={() => setShowNotifPopup(false)} 
         />

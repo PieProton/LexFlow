@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { CalendarClock, ChevronRight, AlertTriangle, Clock, Check } from 'lucide-react';
+import { CalendarClock, ChevronRight, AlertTriangle, Clock, Check, Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-const TYPE_LABELS = { civile: 'Civile', penale: 'Penale', amm: 'Amministrativo', stra: 'Stragiudiziale' };
+const TYPE_LABELS = { civile: 'Civile', penale: 'Penale', amm: 'Amministrativo', stra: 'Stragiudiziale', agenda: 'Agenda' };
 
-export default function DeadlinesPage({ practices, onSelectPractice, settings }) {
+export default function DeadlinesPage({ practices, onSelectPractice, settings, agendaEvents, onNavigate }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -24,7 +24,19 @@ export default function DeadlinesPage({ practices, onSelectPractice, settings })
     try {
       const updated = { ...settings, briefingMattina, briefingPomeriggio, briefingSera };
       await window.api.saveSettings(updated);
-      await window.api.syncNotificationSchedule({ briefingMattina, briefingPomeriggio, briefingSera });
+      // Sync backend scheduler con formato corretto: briefingTimes (array) + items preservati
+      const briefingTimes = [briefingMattina, briefingPomeriggio, briefingSera].filter(Boolean);
+      const items = (agendaEvents || [])
+        .filter(e => !e.completed && e.timeStart)
+        .map(e => ({
+          id: e.id,
+          date: e.date,
+          time: e.timeStart,
+          title: e.title,
+          remindMinutes: e.remindMinutes ?? (settings?.preavviso || 30),
+          customRemindTime: e.customRemindTime || null,
+        }));
+      await window.api.syncNotificationSchedule({ briefingTimes, items });
       setBriefingDirty(false);
       toast.success('Orari briefing aggiornati');
     } catch (e) {
@@ -41,7 +53,25 @@ export default function DeadlinesPage({ practices, onSelectPractice, settings })
       const dDate = new Date(d.date);
       dDate.setHours(0, 0, 0, 0);
       const diff = Math.ceil((dDate - today) / (1000 * 60 * 60 * 24));
-      allDeadlines.push({ ...d, practiceId: p.id, client: p.client, object: p.object, type: p.type, diff });
+      allDeadlines.push({ ...d, practiceId: p.id, client: p.client, object: p.object, type: p.type, diff, source: 'practice' });
+    });
+  });
+
+  // Cross-sync: include agenda events with category "scadenza"
+  (agendaEvents || []).filter(e => e.category === 'scadenza' && !e.completed).forEach(e => {
+    const dDate = new Date(e.date);
+    dDate.setHours(0, 0, 0, 0);
+    const diff = Math.ceil((dDate - today) / (1000 * 60 * 60 * 24));
+    allDeadlines.push({
+      id: e.id,
+      label: e.title,
+      date: e.date,
+      practiceId: e.practiceId || null,
+      client: e.practiceId ? (practices.find(p => p.id === e.practiceId)?.client || 'Agenda') : 'Agenda',
+      object: e.notes || '',
+      type: 'agenda',
+      diff,
+      source: 'agenda',
     });
   });
   allDeadlines.sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -57,7 +87,13 @@ export default function DeadlinesPage({ practices, onSelectPractice, settings })
   const DeadlineRow = ({ d }) => (
     <div
       className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] transition cursor-pointer group border border-white/5 hover:border-white/10"
-      onClick={() => onSelectPractice(d.practiceId)}
+      onClick={() => {
+        if (d.source === 'agenda') {
+          if (onNavigate) onNavigate('/agenda');
+        } else if (d.practiceId) {
+          onSelectPractice(d.practiceId);
+        }
+      }}
     >
       <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
         d.diff < 0 ? 'bg-red-400' : d.diff === 0 ? 'bg-amber-400' : d.diff <= 3 ? 'bg-amber-400' : 'bg-blue-400'
@@ -72,6 +108,7 @@ export default function DeadlinesPage({ practices, onSelectPractice, settings })
         </div>
       </div>
       <div className="text-[10px] font-mono text-text-dim bg-white/5 px-2 py-0.5 rounded">{formatDate(d.date)}</div>
+      {d.source === 'agenda' && <Calendar size={12} className="text-primary/60 flex-shrink-0" title="Da Agenda" />}
       <ChevronRight size={14} className="text-text-dim group-hover:text-primary transition flex-shrink-0" />
     </div>
   );

@@ -1,10 +1,9 @@
 /**
  * Sidebar LexFlow
  *  Desktop (≥1024px): sidebar classica sempre visibile
- *  Mobile  (<1024px): Liquid Curtain fullscreen — identico a LaFagiolata/TechnoJaw
+ *  Mobile  (<1024px): Liquid Curtain fullscreen
  *
- *  Animazioni 1:1 con TechnoJaw OverlayContext.tsx + SiteMobileMenu.tsx
- *  e con LaFagiolata Sidebar.jsx (Liquid Curtain unificato)
+ *  Animazioni Liquid Curtain unificate con LaFagiolata
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -56,7 +55,7 @@ const sections = [
 ];
 
 // ══════════════════════════════════════════════════════════════════════════
-//  LIQUID CURTAIN variants — 1:1 TechnoJaw OverlayContext + LaFagiolata
+//  LIQUID CURTAIN variants
 // ══════════════════════════════════════════════════════════════════════════
 const curtainVariants = {
   hidden: {
@@ -201,7 +200,6 @@ function DesktopSidebar({ version, onLock }) {
 
 // ══════════════════════════════════════════════════════════════════════════
 //  MOBILE SIDEBAR — Liquid Curtain fullscreen
-//  Identico a LaFagiolata Sidebar.jsx + TechnoJaw SiteMobileMenu.tsx
 // ══════════════════════════════════════════════════════════════════════════
 function MobileSidebar({ isOpen, onToggle, version, onLock }) {
   const location = useLocation();
@@ -212,7 +210,7 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
   const onToggleRef = React.useRef(onToggle);
   useEffect(() => { onToggleRef.current = onToggle; }, [onToggle]);
 
-  // Chiusura con delay animazione — identica a TechnoJaw closeOverlay()
+  // Chiusura con delay animazione
   const handleClose = useCallback(() => {
     if (isClosingRef.current) return;
     isClosingRef.current = true;
@@ -224,13 +222,13 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
     }, 300);
   }, []); // dipendenze stabili grazie ai ref
 
-  // Auto-close su cambio di route — identico a LaFagiolata
+  // Auto-close su cambio di route
   useEffect(() => {
     if (isOpen) handleClose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
-  // Scroll lock — identico a TechnoJaw setScrollLock()
+  // Scroll lock
   useEffect(() => {
     if (isOpen) {
       const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
@@ -318,7 +316,7 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
               background: 'radial-gradient(ellipse at top center, rgba(212,169,64,0.07) 0%, transparent 60%)',
             }} />
 
-            {/* Cascade container — stagger 0.08s come TechnoJaw */}
+            {/* Cascade container — stagger 0.08s */}
             <motion.div
               variants={contentContainerVariants}
               initial="hidden"
@@ -408,7 +406,7 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
                         position: 'relative', display: 'inline-block',
                       }}>
                         {item.label}
-                        {/* Underline animato — TechnoJaw style */}
+                        {/* Underline animato */}
                         <span style={{
                           position: 'absolute', bottom: -4, left: 0,
                           width: '100%', height: 2,

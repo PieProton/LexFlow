@@ -134,22 +134,26 @@ window.api = {
 // Freeze API object — previene manomissione via XSS (window.api.lockVault = malicious_fn)
 Object.freeze(window.api);
 
-// Global listener for Rust-initiated notifications — try to forward to browser Notification API
+// Global listener for Rust-initiated notifications.
+// The Rust backend already sends native OS notifications via notification plugin,
+// so we do NOT send another native notification here (that would cause duplicates).
+// This listener is for in-app display only (e.g. toast, badge update, etc.)
+// when the app is in the foreground.
 if (listen) {
   listen('show-notification', async (event) => {
     try {
+      // In-app: use browser Notification API only as a last resort
+      // (e.g. on platforms where native plugin doesn't work)
+      // On macOS/Windows, the backend native notification is already shown,
+      // so we skip to avoid double-notification.
       const notificationAPI = window.__TAURI__?.notification ?? null;
       if (notificationAPI) {
-        const { isPermissionGranted, requestPermission, sendNotification } = notificationAPI;
-        let granted = await isPermissionGranted();
-        if (!granted) {
-          const permission = await requestPermission();
-          granted = permission === 'granted';
-        }
-        if (granted) {
-          sendNotification({ title: event.payload.title, body: event.payload.body });
-        }
-      } else if (window.Notification) {
+        // Tauri native plugin is available → backend already sent the notification natively.
+        // Nothing to do here — no duplicate.
+        return;
+      }
+      // Fallback for web-only mode (dev server without Tauri runtime)
+      if (window.Notification) {
         if (Notification.permission === 'granted') {
           new Notification(event.payload.title, { body: event.payload.body });
         } else if (Notification.permission !== 'denied') {

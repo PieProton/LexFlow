@@ -38,7 +38,7 @@ export default function LicenseSettings() {
         </div>
         <div className="flex justify-between items-center">
           <span className="text-slate-400">Protezione:</span>
-          <span className="text-slate-300">v2 (Ed25519 Asymmetric)</span>
+          <span className="text-slate-300">v2 Burned-Key (Ed25519 + AES-256-GCM)</span>
         </div>
       </div>
       <div className="mt-4 text-[10px] text-slate-500 text-right italic">
