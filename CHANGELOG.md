@@ -4,6 +4,26 @@ Formato: [SemVer](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ---
 
+## [3.0.0] — 2026-02-26
+
+### ⚠️ Breaking Changes
+- **Rotazione chiavi Ed25519** — Nuova coppia di chiavi per firma licenze (le vecchie licenze non sono più valide)
+
+### Aggiunto
+- **Architettura ibrida notifiche** — Desktop usa Tokio cron job (60s interval) per notifiche affidabili; Mobile mantiene `Schedule::At` nativo AOT
+- **Prevenzione App Nap macOS** — FFI `NSProcessInfo.beginActivityWithOptions` impedisce a macOS di sospendere il cron job in background
+- **Capability `notification:default`** — Permessi notifiche allineati per Desktop e Mobile
+
+### Fix
+- **Notifiche Desktop ignorate** — `notify-rust` (backend Desktop di `tauri-plugin-notification`) ignora silenziosamente `Schedule::At`; risolto con cron job Tokio
+- **Dead code warnings** — `notif_id`, `Schedule`, `TimeZone` gated con `#[cfg(target_os = "android/ios")]`
+
+### Dipendenze
+- Aggiunto `tokio` feature `time` per `tokio::time::interval`
+- Aggiunto `objc 0.2.7` + `cocoa 0.24.1` (macOS only) per App Nap prevention
+
+---
+
 ## [2.6.0] — 2026-02-26
 
 ### Pulizia Progetto

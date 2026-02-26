@@ -30,11 +30,6 @@ const VAULT_VERIFY_FILE: &str = "vault.verify";
 const SETTINGS_FILE: &str = "settings.json";
 const AUDIT_LOG_FILE: &str = "vault.audit";
 const NOTIF_SCHEDULE_FILE: &str = "notification-schedule.json";
-const NOTIF_SENT_FILE: &str = "notification-sent.json";
-// NOTIFICATION FIX (Level-9): persisted scheduler checkpoint — survives app restart/power-off.
-// On startup the scheduler reads this file to know "where it left off" and fires any missed
-// events immediately (e.g. an 8:00 reminder if the PC was powered on at 8:15).
-const NOTIF_LAST_CHECKED_FILE: &str = ".notif-last-checked";
 const LICENSE_FILE: &str = "license.json";
 // SECURITY: persisted brute-force state — survives app restart/kill (L7 fix #1)
 const LOCKOUT_FILE: &str = ".lockout";
@@ -45,6 +40,9 @@ const LICENSE_SENTINEL_FILE: &str = ".license-sentinel";
 // Once a key is burned it can NEVER be used again, even on the same machine.
 // The registry is AES-256-GCM encrypted with the device-bound key.
 const BURNED_KEYS_FILE: &str = ".burned-keys";
+// Biometric marker file — avoids keychain access (which triggers Touch ID popup)
+// just to check if bio credentials exist. Only actual bio_login reads the keychain.
+const BIO_MARKER_FILE: &str = ".bio-enabled";
 
 #[allow(dead_code)]
 const BIO_SERVICE: &str = "LexFlow_Bio";
@@ -690,12 +688,13 @@ fn change_password(state: State<AppState>, current_password: String, new_passwor
     }
     // Update in-memory key
     *state.vault_key.lock().unwrap() = Some(SecureKey(new_key));
-    // Update biometric if saved
+    // Update biometric if saved (check marker file instead of keychain to avoid Touch ID popup)
     #[cfg(not(target_os = "android"))]
     {
-        let user = whoami::username();
-        if let Ok(entry) = keyring::Entry::new(BIO_SERVICE, &user) {
-            if entry.get_password().is_ok() {
+        let dir = state.data_dir.lock().unwrap().clone();
+        if dir.join(BIO_MARKER_FILE).exists() {
+            let user = whoami::username();
+            if let Ok(entry) = keyring::Entry::new(BIO_SERVICE, &user) {
                 let _ = entry.set_password(&new_password);
             }
         }
@@ -840,36 +839,37 @@ fn check_bio() -> bool {
 }
 
 #[tauri::command]
-fn has_bio_saved() -> bool {
+fn has_bio_saved(state: State<AppState>) -> bool {
+    // TOUCH ID FIX: Do NOT call keyring::get_password() here — on macOS that triggers
+    // the Touch ID / password popup just to check if credentials exist!
+    // Instead, use a lightweight marker file written by save_bio / cleared by clear_bio.
     #[cfg(not(target_os = "android"))]
     {
-        let user = whoami::username();
-        let entry = keyring::Entry::new(BIO_SERVICE, &user);
-        match entry {
-            Ok(e) => e.get_password().is_ok(),
-            Err(_) => false,
-        }
+        let dir = state.data_dir.lock().unwrap().clone();
+        dir.join(BIO_MARKER_FILE).exists()
     }
     #[cfg(target_os = "android")]
     {
-        // Su Android la password bio è salvata nel Keystore nativo — gestito via flag in settings
+        let _ = state;
         false
     }
 }
 
 #[tauri::command]
-fn save_bio(pwd: String) -> Result<bool, String> {
+fn save_bio(state: State<AppState>, pwd: String) -> Result<bool, String> {
     #[cfg(not(target_os = "android"))]
     {
         let user = whoami::username();
         let entry = keyring::Entry::new(BIO_SERVICE, &user).map_err(|e| e.to_string())?;
         entry.set_password(&pwd).map_err(|e| e.to_string())?;
+        // Write marker file so has_bio_saved() can check without triggering Touch ID
+        let dir = state.data_dir.lock().unwrap().clone();
+        let _ = fs::write(dir.join(BIO_MARKER_FILE), "1");
         Ok(true)
     }
     #[cfg(target_os = "android")]
     {
-        // Su Android: la pwd è salvata nel vault cifrato — il biometric bridge JS gestisce l'auth
-        let _ = pwd; // suppress unused warning
+        let _ = (state, pwd);
         Ok(true)
     }
 }
@@ -989,15 +989,19 @@ if ($result -eq [Windows.Security.Credentials.UI.UserConsentVerificationResult]:
 }
 
 #[tauri::command]
-fn clear_bio() -> bool {
+fn clear_bio(state: State<AppState>) -> bool {
     #[cfg(not(target_os = "android"))]
     {
         let user = whoami::username();
         if let Ok(e) = keyring::Entry::new(BIO_SERVICE, &user) { let _ = e.delete_credential(); }
+        // Remove marker file
+        let dir = state.data_dir.lock().unwrap().clone();
+        let _ = fs::remove_file(dir.join(BIO_MARKER_FILE));
         true
     }
     #[cfg(target_os = "android")]
     {
+        let _ = state;
         true
     }
 }
@@ -1047,7 +1051,7 @@ mod tests {
     fn test_license_verification_full_cycle() {
         // Questa è la tua licenza di prova (ho aggiunto il prefisso LXFW. richiesto dal codice)
         // Nota: i campi devono essere "c" (client) ed "e" (expiry) come definito nella tua struct LicensePayload
-    let valid_token = "LXFW.eyJjIjoicGlldHJvX3Rlc3QiLCJlIjoxODAzNTU1MjA5MDQ2LCJpZCI6IjM4NDA2MzgxLTU1NTQtNDdhMi05NDVjLTE4OWJiZGQ2YjdlNyJ9.8YfuzlNLv8DjmQ3w3o7tzYuVSCrjJOkyY01oGUlLNUO-tOGxlBHGpmWHqwlya6PnqoYz_CUf_EqOue3hyHScDw";
+    let valid_token = "LXFW.eyJjIjoicGlldHJvX3Rlc3QiLCJlIjoyMDg3NzAzMjcyNTg4LCJpZCI6IjVhOTFiYzNlLWQ0ZjctNGExMi05YzhiLTNmMWU3ZDJhMGI0NSJ9.gCTXtrcIcHatN-GPOQaXhYgyXn9Wn9XtJAArEbaOGNAJX0CP2z0tYJ7EV1DttWRn6MUxdyPZsgkgWcoIoK3aDA";
 
         // 1. Test verifica positiva
         let result = verify_license(valid_token.to_string());
@@ -1268,10 +1272,10 @@ fn check_license(state: State<AppState>) -> Value {
 // The corresponding private key is stored securely offline (never in source control).
 // To regenerate: pip install cryptography && python3 -c "from cryptography.hazmat.primitives.asymmetric import ed25519; k=ed25519.Ed25519PrivateKey.generate(); print(list(k.public_key().public_bytes(encoding=__import__('cryptography.hazmat.primitives.serialization',fromlist=['Encoding']).Encoding.Raw, format=__import__('cryptography.hazmat.primitives.serialization',fromlist=['PublicFormat']).PublicFormat.Raw)))"
 const PUBLIC_KEY_BYTES: [u8; 32] = [
-    68u8, 119u8, 141u8, 155u8, 154u8, 132u8, 196u8, 7u8,
-    201u8, 49u8, 109u8, 97u8, 15u8, 80u8, 60u8, 230u8,
-    245u8, 157u8, 4u8, 103u8, 132u8, 99u8, 132u8, 127u8,
-    238u8, 208u8, 161u8, 71u8, 21u8, 237u8, 236u8, 142u8,
+    253u8, 163u8, 188u8, 248u8, 70u8, 245u8, 107u8, 254u8,
+    146u8, 8u8, 131u8, 167u8, 183u8, 94u8, 71u8, 224u8,
+    140u8, 237u8, 206u8, 74u8, 116u8, 185u8, 140u8, 0u8,
+    183u8, 15u8, 243u8, 77u8, 117u8, 233u8, 138u8, 84u8,
 ];
 
 #[derive(Deserialize, Serialize)]
@@ -1771,34 +1775,43 @@ async fn export_pdf(app: AppHandle, data: Vec<u8>, default_name: String) -> Resu
 
 #[tauri::command]
 fn send_notification(app: AppHandle, title: String, body: String) {
-    use tauri_plugin_notification::NotificationExt;
-    // Try native notification plugin ONLY — no emit("show-notification") here.
-    // The backend scheduler already emits "show-notification" for its own events;
-    // if we also emit here, frontend listener creates a DUPLICATE native notification.
-    let result = app.notification().builder().title(&title).body(&body).show();
-    if let Err(e) = result {
-        eprintln!("[LexFlow] Native notification failed: {:?}, falling back to event", e);
-        // Fallback: emit event only if native plugin failed
-        let _ = app.emit("show-notification", serde_json::json!({"title": title, "body": body}));
-    }
+    // Even though Tauri IPC commands run on the main thread context, we
+    // explicitly use run_on_main_thread to guarantee the NSRunLoop is active
+    // for the XPC call to usernoted (macOS Notification Center daemon).
+    let t = title.clone();
+    let b = body.clone();
+    let ah = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        use tauri_plugin_notification::NotificationExt;
+        if let Err(e) = ah.notification().builder().title(&t).body(&b).show() {
+            eprintln!("[LexFlow] Native notification failed: {:?}, emitting event fallback", e);
+            let _ = ah.emit("show-notification", serde_json::json!({"title": t, "body": b}));
+        }
+    });
 }
 
 /// Test notification — dev-only command to verify the notification pipeline.
+/// Always dispatches via run_on_main_thread for NSRunLoop guarantee.
 #[tauri::command]
 fn test_notification(app: AppHandle) -> bool {
-    use tauri_plugin_notification::NotificationExt;
-    match app.notification().builder()
-        .title("LexFlow — Test Notifica")
-        .body("Le notifiche funzionano correttamente!")
-        .show()
-    {
+    let ah = app.clone();
+    match app.run_on_main_thread(move || {
+        use tauri_plugin_notification::NotificationExt;
+        if let Err(e) = ah.notification().builder()
+            .title("LexFlow — Test Notifica")
+            .body("Le notifiche funzionano correttamente!")
+            .show()
+        {
+            eprintln!("[LexFlow] Test notification failed: {:?}", e);
+        }
+    }) {
         Ok(_) => true,
         Err(_) => false,
     }
 }
 
 #[tauri::command]
-fn sync_notification_schedule(state: State<AppState>, schedule: Value) -> bool {
+fn sync_notification_schedule(app: AppHandle, state: State<AppState>, schedule: Value) -> bool {
     let dir = state.data_dir.lock().unwrap().clone();
     let key = get_local_encryption_key();
     let plaintext = serde_json::to_vec(&schedule).unwrap_or_default();
@@ -1812,7 +1825,14 @@ fn sync_notification_schedule(state: State<AppState>, schedule: Value) -> bool {
                 .open(&tmp)
                 .and_then(|mut f| { f.write_all(&encrypted)?; f.sync_all() })
                 .is_ok();
-            if ok { fs::rename(&tmp, dir.join(NOTIF_SCHEDULE_FILE)).is_ok() } else { false }
+            if ok {
+                let written = fs::rename(&tmp, dir.join(NOTIF_SCHEDULE_FILE)).is_ok();
+                if written {
+                    // ── TRIGGER: re-sync OS notification queue after data change ──
+                    sync_notifications(&app, &dir);
+                }
+                written
+            } else { false }
         },
         Err(_) => false,
     }
@@ -1849,257 +1869,382 @@ fn read_notification_schedule(data_dir: &PathBuf) -> Option<Value> {
     }
 }
 
-/// Background notification engine — reads encrypted schedule, no vault access needed
-fn start_notification_scheduler(app: AppHandle, data_dir: PathBuf) {
+// ═══════════════════════════════════════════════════════════
+//  HYBRID NOTIFICATION ARCHITECTURE (v3.1)
+// ═══════════════════════════════════════════════════════════
+//
+// MOBILE (Android/iOS): Native AOT scheduling via Schedule::At — the OS fires
+//   notifications even if the app is killed.  sync_notifications() cancels all
+//   pending and re-schedules from current data.
+//
+// DESKTOP (macOS/Windows/Linux): tauri-plugin-notification (via notify-rust)
+//   IGNORES Schedule::At and fires immediately.  Instead we run a single async
+//   Tokio cron job that wakes once per minute, checks the JSON state, and fires
+//   notifications in real-time.  Zero threads, zero sleeps, zero CPU waste.
+//
+//   On macOS the App Nap hack (NSProcessInfo.beginActivityWithOptions) prevents
+//   the OS from freezing the async timer when the window is hidden.
+
+// ── MOBILE: Native AOT scheduling ─────────────────────────────────────────
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn sync_notifications(app: &AppHandle, data_dir: &std::path::Path) {
     use tauri_plugin_notification::NotificationExt;
-    std::thread::spawn(move || {
-        eprintln!("[LexFlow Scheduler] Started — data_dir: {:?}", data_dir);
-        eprintln!("[LexFlow Scheduler] Schedule file exists: {}", data_dir.join(NOTIF_SCHEDULE_FILE).exists());
-        // SECURITY FIX (Gemini L5-5): Use epoch-based "what fired since last check" instead
-        // of string "HH:MM" equality. The old approach missed notifications after:
-        //   - DST transitions (clock jumps 60 min, skipping a full minute)
-        //   - NTP corrections (clock steps backward, causing double-fire or silence)
-        //   - System sleep/wake (60s tick skips minutes entirely)
-        // New approach: remember the last_checked timestamp; fire anything whose scheduled
-        // time falls in (last_checked, now]. This is monotonically safe and catches skipped
-        // minutes after wake-from-sleep.
-        //
-        // NOTIFICATION FIX (Level-9): persist last_checked to disk so missed events are
-        // recovered when the app is restarted or the PC is powered back on.
-        // e.g. 8:00 reminder scheduled, PC powered on at 8:15 → fires immediately on startup.
-        // Cap the catchup window to 24h to avoid spamming old events after a long absence.
-        let local_key = get_local_encryption_key();
-        let last_checked_path = data_dir.join(NOTIF_LAST_CHECKED_FILE);
 
-        // Load persisted last_checked from disk; fall back to now-65s (normal startup behaviour)
-        let mut last_checked: chrono::DateTime<chrono::Local> = {
-            let from_disk = fs::read_to_string(&last_checked_path)
-                .ok()
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s.trim()).ok())
-                .map(|dt| dt.with_timezone(&chrono::Local));
-            match from_disk {
-                Some(persisted) => {
-                    // Cap catchup to 24h — avoids spamming week-old events after a long vacation
-                    let cap = chrono::Local::now() - chrono::Duration::hours(24);
-                    if persisted < cap { cap } else { persisted }
-                },
-                None => chrono::Local::now() - chrono::Duration::seconds(65),
-            }
+    // Cancel all pending
+    if let Err(e) = app.notification().cancel_all() {
+        eprintln!("[LexFlow Sync] cancel_all error (non-critical): {:?}", e);
+    } else {
+        eprintln!("[LexFlow Sync] All pending notifications cancelled ✓");
+    }
+
+    let schedule_data: serde_json::Value = match read_notification_schedule(
+        &data_dir.to_path_buf()
+    ) {
+        Some(v) => v,
+        None => {
+            eprintln!("[LexFlow Sync] No schedule file — nothing to schedule");
+            return;
+        }
+    };
+
+    let briefing_times = schedule_data.get("briefingTimes")
+        .and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let items = schedule_data.get("items")
+        .and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+    let now = chrono::Local::now();
+    let tomorrow = (now + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    const MAX_SCHEDULED: i32 = 60;
+    let horizon = now + chrono::Duration::days(14);
+    let mut scheduled_count: i32 = 0;
+
+    let chrono_to_offset = |dt: chrono::DateTime<chrono::Local>| -> Option<time::OffsetDateTime> {
+        let ts = dt.timestamp();
+        let ns = dt.timestamp_subsec_nanos();
+        let offset_secs = dt.offset().local_minus_utc();
+        let offset = time::UtcOffset::from_whole_seconds(offset_secs).ok()?;
+        time::OffsetDateTime::from_unix_timestamp(ts).ok()
+            .map(|t| t.replace_nanosecond(ns).unwrap_or(t))
+            .map(|t| t.to_offset(offset))
+    };
+
+    let hash_id = |seed: &str| -> i32 {
+        let hash = <sha2::Sha256 as sha2::Digest>::digest(seed.as_bytes());
+        let raw = i32::from_le_bytes([hash[0], hash[1], hash[2], hash[3]]);
+        raw.wrapping_abs().max(1)
+    };
+
+    // Schedule briefings
+    for bt in &briefing_times {
+        if scheduled_count >= MAX_SCHEDULED { break; }
+        let time_str = match bt.as_str() {
+            Some(s) if s.len() >= 5 => s,
+            _ => continue,
         };
-        // Persist the startup value immediately so a crash loop doesn't replay events forever
-        let _ = fs::write(&last_checked_path, last_checked.to_rfc3339());
-
-        loop {
-            std::thread::sleep(Duration::from_secs(30));
-
-            let now = chrono::Local::now();
-            // Window: (last_checked, now] — catches all minutes we might have skipped
-            let window_start = last_checked;
-            last_checked = now;
-            // Persist so next startup knows where we got to
-            let _ = fs::write(&last_checked_path, now.to_rfc3339());
-
-            let today = now.format("%Y-%m-%d").to_string();
-            let tomorrow = (now + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
-
-            // Read encrypted schedule
-            let schedule: Value = match read_notification_schedule(&data_dir) {
-                Some(v) => {
-                    eprintln!("[LexFlow Scheduler] Tick — schedule loaded, items: {}, briefings: {}",
-                        v.get("items").and_then(|i| i.as_array()).map(|a| a.len()).unwrap_or(0),
-                        v.get("briefingTimes").and_then(|b| b.as_array()).map(|a| a.len()).unwrap_or(0));
-                    v
-                }
-                None => {
-                    eprintln!("[LexFlow Scheduler] Tick — NO schedule file found or decrypt failed");
-                    continue;
-                }
+        for day_offset in 0..=1i64 {
+            if scheduled_count >= MAX_SCHEDULED { break; }
+            let target_date = now.date_naive() + chrono::Duration::days(day_offset);
+            let date_str = target_date.format("%Y-%m-%d").to_string();
+            let dt_str = format!("{} {}", date_str, time_str);
+            let target_dt = match chrono::NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%d %H:%M") {
+                Ok(dt) => dt, Err(_) => continue,
             };
-            // Read encrypted sent log
-            let sent_path = data_dir.join(NOTIF_SENT_FILE);
-            let mut sent: Vec<String> = if sent_path.exists() {
-                if let Ok(enc) = fs::read(&sent_path) {
-                    if let Ok(dec) = decrypt_data(&local_key, &enc) {
-                        serde_json::from_slice(&dec).unwrap_or_default()
-                    } else {
-                        fs::read_to_string(&sent_path).ok()
-                            .and_then(|s| serde_json::from_str(&s).ok())
-                            .unwrap_or_default()
-                    }
-                } else { vec![] }
-            } else { vec![] };
-
-            let briefing_times = schedule.get("briefingTimes")
-                .and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            let items = schedule.get("items")
-                .and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            let mut new_sent = false;
-
-            // Helper: check if a "HH:MM" time on a given date falls in our window
-            let time_in_window = |date_str: &str, time_str: &str| -> bool {
-                if time_str.len() < 5 { return false; }
-                let dt_str = format!("{} {}", date_str, time_str);
-                if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&dt_str, "%Y-%m-%d %H:%M") {
-                    let dt_local = chrono::Local.from_local_datetime(&dt).single();
-                    if let Some(t) = dt_local {
-                        return t > window_start && t <= now;
-                    }
-                }
-                false
+            let target_local = match chrono::Local.from_local_datetime(&target_dt).single() {
+                Some(t) => t, None => continue,
             };
-
-            // Briefing times (daily summary)
-            for bt in &briefing_times {
-                if let Some(time_str) = bt.as_str() {
-                    if time_in_window(&today, time_str) {
-                        let key = format!("briefing-{}-{}", today, time_str);
-                        if !sent.contains(&key) {
-                            // Determine briefing context: morning shows all day,
-                            // afternoon shows 13:00+, evening shows tomorrow's events
-                            let briefing_hour: u32 = time_str.split(':').next()
-                                .and_then(|h| h.parse().ok()).unwrap_or(8);
-
-                            let (filter_date, time_from, period_label) = if briefing_hour < 12 {
-                                (today.as_str(), "00:00", "oggi")
-                            } else if briefing_hour < 18 {
-                                (today.as_str(), "13:00", "questo pomeriggio")
-                            } else {
-                                (tomorrow.as_str(), "00:00", "domani")
-                            };
-
-                            // Filter: matching date, not completed, time >= threshold
-                            let mut relevant_items: Vec<&Value> = items.iter()
-                                .filter(|i| {
-                                    let d = i.get("date").and_then(|d| d.as_str()).unwrap_or("");
-                                    let t = i.get("time").and_then(|t| t.as_str()).unwrap_or("00:00");
-                                    let done = i.get("completed").and_then(|c| c.as_bool()).unwrap_or(false);
-                                    d == filter_date && !done && t >= time_from
-                                })
-                                .collect();
-                            // Sort by time ascending
-                            relevant_items.sort_by(|a, b| {
-                                let ta = a.get("time").and_then(|v| v.as_str()).unwrap_or("");
-                                let tb = b.get("time").and_then(|v| v.as_str()).unwrap_or("");
-                                ta.cmp(tb)
-                            });
-
-                            let count = relevant_items.len();
-                            let title = if count == 0 {
-                                format!("LexFlow — Nessun impegno {}", period_label)
-                            } else {
-                                format!("LexFlow — {} impegn{} {}", count, if count == 1 { "o" } else { "i" }, period_label)
-                            };
-
-                            let body_str = if count == 0 {
-                                format!("Nessun impegno in programma per {}.", period_label)
-                            } else {
-                                let mut lines: Vec<String> = Vec::new();
-                                for item in relevant_items.iter().take(4) {
-                                    let t = item.get("time").and_then(|v| v.as_str()).unwrap_or("");
-                                    let name = item.get("title").and_then(|v| v.as_str()).unwrap_or("Impegno");
-                                    if !t.is_empty() {
-                                        lines.push(format!("• {} — {}", t, name));
-                                    } else {
-                                        lines.push(format!("• {}", name));
-                                    }
-                                }
-                                if count > 4 {
-                                    lines.push(format!("  …e altri {}", count - 4));
-                                }
-                                lines.join("\n")
-                            };
-                            let _ = app.notification().builder().title(&title).body(&body_str).show();
-                            let _ = app.emit("show-notification", json!({"title": title, "body": body_str}));
-                            sent.push(key);
-                            new_sent = true;
-                        }
-                    }
+            if target_local <= now || target_local > horizon { continue; }
+            let offset_dt = match chrono_to_offset(target_local) {
+                Some(t) => t, None => continue,
+            };
+            let briefing_hour: u32 = time_str.split(':').next()
+                .and_then(|h| h.parse().ok()).unwrap_or(8);
+            let (filter_date, time_from, period_label) = if briefing_hour < 12 {
+                (date_str.as_str(), "00:00", "oggi")
+            } else if briefing_hour < 18 {
+                (date_str.as_str(), "13:00", "questo pomeriggio")
+            } else {
+                if day_offset == 0 { (&tomorrow as &str, "00:00", "domani") }
+                else { continue; }
+            };
+            let relevant_count = items.iter().filter(|i| {
+                let d = i.get("date").and_then(|d| d.as_str()).unwrap_or("");
+                let t = i.get("time").and_then(|t| t.as_str()).unwrap_or("00:00");
+                let done = i.get("completed").and_then(|c| c.as_bool()).unwrap_or(false);
+                d == filter_date && !done && t >= time_from
+            }).count();
+            let title = if relevant_count == 0 {
+                format!("LexFlow — Nessun impegno {}", period_label)
+            } else {
+                format!("LexFlow — {} impegn{} {}", relevant_count,
+                    if relevant_count == 1 { "o" } else { "i" }, period_label)
+            };
+            let body_str = if relevant_count == 0 {
+                format!("Nessun impegno in programma per {}.", period_label)
+            } else {
+                let mut relevant_items: Vec<&serde_json::Value> = items.iter()
+                    .filter(|i| {
+                        let d = i.get("date").and_then(|d| d.as_str()).unwrap_or("");
+                        let t = i.get("time").and_then(|t| t.as_str()).unwrap_or("00:00");
+                        let done = i.get("completed").and_then(|c| c.as_bool()).unwrap_or(false);
+                        d == filter_date && !done && t >= time_from
+                    }).collect();
+                relevant_items.sort_by(|a, b| {
+                    let ta = a.get("time").and_then(|v| v.as_str()).unwrap_or("");
+                    let tb = b.get("time").and_then(|v| v.as_str()).unwrap_or("");
+                    ta.cmp(tb)
+                });
+                let mut lines: Vec<String> = Vec::new();
+                for item in relevant_items.iter().take(4) {
+                    let t = item.get("time").and_then(|v| v.as_str()).unwrap_or("");
+                    let name = item.get("title").and_then(|v| v.as_str()).unwrap_or("Impegno");
+                    if !t.is_empty() { lines.push(format!("• {} — {}", t, name)); }
+                    else { lines.push(format!("• {}", name)); }
                 }
-            }
-
-            // Per-item reminders
-            for item in &items {
-                let item_date = item.get("date").and_then(|d| d.as_str()).unwrap_or("");
-                let item_time = item.get("time").and_then(|t| t.as_str()).unwrap_or("");
-                let item_title = item.get("title").and_then(|t| t.as_str()).unwrap_or("Impegno");
-                let item_id = item.get("id").and_then(|i| i.as_str()).unwrap_or("");
-
-                // Determine the reminder fire time:
-                // A) customRemindTime = "HH:MM" → fire at that exact time on item_date
-                // B) remindMinutes = N (integer) → fire at item_time - N minutes
-                // C) remindMinutes = "custom" but no customRemindTime → treat as 30 min
-                let custom_remind_time = item.get("customRemindTime")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| s.len() >= 5);
-                let remind_min = item.get("remindMinutes")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(30);
-
-                if (item_date == today || item_date == tomorrow) && item_time.len() >= 5 {
-                    let item_dt_str = format!("{} {}", item_date, item_time);
-                    if let Ok(item_dt) = chrono::NaiveDateTime::parse_from_str(&item_dt_str, "%Y-%m-%d %H:%M") {
-                        if let Some(item_local) = chrono::Local.from_local_datetime(&item_dt).single() {
-                            // Compute the actual reminder fire time
-                            let remind_time = if let Some(crt) = custom_remind_time {
-                                // Custom time: fire at item_date + customRemindTime
-                                let crt_str = format!("{} {}", item_date, crt);
-                                chrono::NaiveDateTime::parse_from_str(&crt_str, "%Y-%m-%d %H:%M")
-                                    .ok()
-                                    .and_then(|dt| chrono::Local.from_local_datetime(&dt).single())
-                                    .unwrap_or(item_local - chrono::Duration::minutes(remind_min))
-                            } else {
-                                item_local - chrono::Duration::minutes(remind_min)
-                            };
-
-                            if remind_time > window_start && remind_time <= now {
-                                let key = format!("remind-{}-{}-{}", item_date, item_id, item_time);
-                                if !sent.contains(&key) {
-                                    let diff = (item_local - now).num_minutes().max(0);
-                                    let time_desc = if diff == 0 {
-                                        "adesso!".to_string()
-                                    } else if diff < 60 {
-                                        format!("tra {} minuti", diff)
-                                    } else {
-                                        let h = diff / 60;
-                                        let m = diff % 60;
-                                        if m == 0 {
-                                            format!("tra {} or{}", h, if h == 1 { "a" } else { "e" })
-                                        } else {
-                                            format!("tra {}h {:02}min", h, m)
-                                        }
-                                    };
-                                    let body = format!("{} — {} ({})", item_title, item_time, time_desc);
-                                    let notif_title = "LexFlow — Promemoria";
-                                    // Native notification (works even when app is in background)
-                                    let _ = app.notification().builder().title(notif_title).body(&body).show();
-                                    // Also emit to frontend for in-app display
-                                    let _ = app.emit("show-notification", json!({"title": notif_title, "body": body}));
-                                    sent.push(key);
-                                    new_sent = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Persist encrypted sent log (keep last 500)
-            if new_sent {
-                if sent.len() > 500 { sent.drain(..sent.len() - 500); }
-                if let Ok(enc) = encrypt_data(&local_key, &serde_json::to_vec(&sent).unwrap_or_default()) {
-                    let _ = fs::write(&sent_path, enc);
-                }
-            }
-            // Daily cleanup: keep only today + tomorrow entries
-            let current_minute = now.format("%H:%M").to_string();
-            if current_minute == "00:00" {
-                sent.retain(|s| s.contains(&today) || s.contains(&tomorrow));
-                if let Ok(enc) = encrypt_data(&local_key, &serde_json::to_vec(&sent).unwrap_or_default()) {
-                    let _ = fs::write(&sent_path, enc);
-                }
+                if relevant_count > 4 { lines.push(format!("  …e altri {}", relevant_count - 4)); }
+                lines.join("\n")
+            };
+            let notif_id = hash_id(&format!("briefing-{}-{}", date_str, time_str));
+            let sched = tauri_plugin_notification::Schedule::At {
+                date: offset_dt, repeating: false, allow_while_idle: true,
+            };
+            if app.notification().builder().id(notif_id).title(&title).body(&body_str)
+                .schedule(sched).show().is_ok() {
+                scheduled_count += 1;
             }
         }
-    });
+    }
+
+    // Schedule per-item reminders
+    for item in &items {
+        if scheduled_count >= MAX_SCHEDULED { break; }
+        let item_date = item.get("date").and_then(|d| d.as_str()).unwrap_or("");
+        let item_time = item.get("time").and_then(|t| t.as_str()).unwrap_or("");
+        let item_title = item.get("title").and_then(|t| t.as_str()).unwrap_or("Impegno");
+        let item_id = item.get("id").and_then(|i| i.as_str()).unwrap_or("");
+        let completed = item.get("completed").and_then(|c| c.as_bool()).unwrap_or(false);
+        if completed || item_time.len() < 5 { continue; }
+        let item_dt_str = format!("{} {}", item_date, item_time);
+        let item_dt = match chrono::NaiveDateTime::parse_from_str(&item_dt_str, "%Y-%m-%d %H:%M") {
+            Ok(dt) => dt, Err(_) => continue,
+        };
+        let item_local = match chrono::Local.from_local_datetime(&item_dt).single() {
+            Some(t) => t, None => continue,
+        };
+        if item_local > horizon { continue; }
+        let custom_remind_time = item.get("customRemindTime")
+            .and_then(|v| v.as_str()).filter(|s| s.len() >= 5);
+        let remind_min = item.get("remindMinutes").and_then(|v| v.as_i64()).unwrap_or(30);
+        let remind_time = if let Some(crt) = custom_remind_time {
+            let crt_str = format!("{} {}", item_date, crt);
+            chrono::NaiveDateTime::parse_from_str(&crt_str, "%Y-%m-%d %H:%M")
+                .ok().and_then(|dt| chrono::Local.from_local_datetime(&dt).single())
+                .unwrap_or(item_local - chrono::Duration::minutes(remind_min))
+        } else {
+            item_local - chrono::Duration::minutes(remind_min)
+        };
+        if remind_time <= now { continue; }
+        let offset_dt = match chrono_to_offset(remind_time) {
+            Some(t) => t, None => continue,
+        };
+        let diff = (item_local - remind_time).num_minutes().max(0);
+        let time_desc = if diff == 0 { "adesso!".to_string() }
+            else if diff < 60 { format!("tra {} minuti", diff) }
+            else {
+                let h = diff / 60; let m = diff % 60;
+                if m == 0 { format!("tra {} or{}", h, if h == 1 { "a" } else { "e" }) }
+                else { format!("tra {}h {:02}min", h, m) }
+            };
+        let body = format!("{} — {} ({})", item_title, item_time, time_desc);
+        let notif_id = hash_id(&format!("remind-{}-{}-{}", item_date, item_id, item_time));
+        let sched = tauri_plugin_notification::Schedule::At {
+            date: offset_dt, repeating: false, allow_while_idle: true,
+        };
+        if app.notification().builder().id(notif_id).title("LexFlow — Promemoria")
+            .body(&body).schedule(sched).show().is_ok() {
+            scheduled_count += 1;
+        }
+    }
+
+    eprintln!("[LexFlow Sync] ══ Mobile AOT sync: {}/{} notifications scheduled ══", scheduled_count, MAX_SCHEDULED);
+}
+
+// ── DESKTOP: stub — scheduling is handled by the async cron job ────────────
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn sync_notifications(_app: &AppHandle, _data_dir: &std::path::Path) {
+    // No-op on desktop.  The desktop_cron_job() runs every 60s and fires
+    // notifications in real-time by checking the JSON state.
+}
+
+// ── DESKTOP: Async Cron Job — wakes every 60s, fires matching notifications ──
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+async fn desktop_cron_job(app: AppHandle) {
+    use tauri_plugin_notification::NotificationExt;
+
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+    let mut last_processed_minute = String::new();
+
+    eprintln!("[LexFlow Cron] Desktop cron job started — checking every 60s");
+
+    loop {
+        interval.tick().await;
+
+        let now = chrono::Local::now();
+        let current_minute = now.format("%Y-%m-%d %H:%M").to_string();
+
+        // Avoid double-firing within the same minute
+        if current_minute == last_processed_minute { continue; }
+        last_processed_minute = current_minute.clone();
+
+        // Read data_dir from managed state
+        let data_dir = {
+            let state = app.state::<AppState>();
+            let dir = state.data_dir.lock().unwrap().clone();
+            dir
+        };
+
+        // ── Read notification schedule ──
+        let schedule_data: serde_json::Value = match read_notification_schedule(&data_dir) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        let briefing_times = schedule_data.get("briefingTimes")
+            .and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let items = schedule_data.get("items")
+            .and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+        let today = now.format("%Y-%m-%d").to_string();
+        let tomorrow = (now + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+
+        // ── Check briefings: does any briefing fire THIS minute? ──
+        for bt in &briefing_times {
+            let time_str = match bt.as_str() {
+                Some(s) if s.len() >= 5 => s,
+                _ => continue,
+            };
+
+            let briefing_key = format!("{} {}", today, time_str);
+            if briefing_key != current_minute { continue; }
+
+            // This briefing fires NOW
+            let briefing_hour: u32 = time_str.split(':').next()
+                .and_then(|h| h.parse().ok()).unwrap_or(8);
+
+            let (filter_date, time_from, period_label) = if briefing_hour < 12 {
+                (today.as_str(), "00:00", "oggi")
+            } else if briefing_hour < 18 {
+                (today.as_str(), "13:00", "questo pomeriggio")
+            } else {
+                (tomorrow.as_str(), "00:00", "domani")
+            };
+
+            let relevant_count = items.iter().filter(|i| {
+                let d = i.get("date").and_then(|d| d.as_str()).unwrap_or("");
+                let t = i.get("time").and_then(|t| t.as_str()).unwrap_or("00:00");
+                let done = i.get("completed").and_then(|c| c.as_bool()).unwrap_or(false);
+                d == filter_date && !done && t >= time_from
+            }).count();
+
+            let title = if relevant_count == 0 {
+                format!("LexFlow — Nessun impegno {}", period_label)
+            } else {
+                format!("LexFlow — {} impegn{} {}", relevant_count,
+                    if relevant_count == 1 { "o" } else { "i" }, period_label)
+            };
+
+            let body_str = if relevant_count == 0 {
+                format!("Nessun impegno in programma per {}.", period_label)
+            } else {
+                let mut relevant_items: Vec<&serde_json::Value> = items.iter()
+                    .filter(|i| {
+                        let d = i.get("date").and_then(|d| d.as_str()).unwrap_or("");
+                        let t = i.get("time").and_then(|t| t.as_str()).unwrap_or("00:00");
+                        let done = i.get("completed").and_then(|c| c.as_bool()).unwrap_or(false);
+                        d == filter_date && !done && t >= time_from
+                    }).collect();
+                relevant_items.sort_by(|a, b| {
+                    let ta = a.get("time").and_then(|v| v.as_str()).unwrap_or("");
+                    let tb = b.get("time").and_then(|v| v.as_str()).unwrap_or("");
+                    ta.cmp(tb)
+                });
+                let mut lines: Vec<String> = Vec::new();
+                for item in relevant_items.iter().take(4) {
+                    let t = item.get("time").and_then(|v| v.as_str()).unwrap_or("");
+                    let name = item.get("title").and_then(|v| v.as_str()).unwrap_or("Impegno");
+                    if !t.is_empty() { lines.push(format!("• {} — {}", t, name)); }
+                    else { lines.push(format!("• {}", name)); }
+                }
+                if relevant_count > 4 { lines.push(format!("  …e altri {}", relevant_count - 4)); }
+                lines.join("\n")
+            };
+
+            let app_clone = app.clone();
+            let title_clone = title.clone();
+            let body_clone = body_str.clone();
+            let _ = app.run_on_main_thread(move || {
+                let _ = app_clone.notification().builder()
+                    .title(&title_clone)
+                    .body(&body_clone)
+                    .show();
+            });
+            eprintln!("[LexFlow Cron] ✓ Briefing fired: {}", briefing_key);
+        }
+
+        // ── Check per-item reminders: does any reminder fire THIS minute? ──
+        for item in &items {
+            let item_date = item.get("date").and_then(|d| d.as_str()).unwrap_or("");
+            let item_time = item.get("time").and_then(|t| t.as_str()).unwrap_or("");
+            let item_title = item.get("title").and_then(|t| t.as_str()).unwrap_or("Impegno");
+            let completed = item.get("completed").and_then(|c| c.as_bool()).unwrap_or(false);
+            if completed || item_time.len() < 5 { continue; }
+
+            let item_dt_str = format!("{} {}", item_date, item_time);
+            let item_dt = match chrono::NaiveDateTime::parse_from_str(&item_dt_str, "%Y-%m-%d %H:%M") {
+                Ok(dt) => dt, Err(_) => continue,
+            };
+            let item_local = match chrono::Local.from_local_datetime(&item_dt).single() {
+                Some(t) => t, None => continue,
+            };
+
+            // Determine fire time
+            let custom_remind_time = item.get("customRemindTime")
+                .and_then(|v| v.as_str()).filter(|s| s.len() >= 5);
+            let remind_min = item.get("remindMinutes").and_then(|v| v.as_i64()).unwrap_or(30);
+
+            let remind_time = if let Some(crt) = custom_remind_time {
+                let crt_str = format!("{} {}", item_date, crt);
+                chrono::NaiveDateTime::parse_from_str(&crt_str, "%Y-%m-%d %H:%M")
+                    .ok().and_then(|dt| chrono::Local.from_local_datetime(&dt).single())
+                    .unwrap_or(item_local - chrono::Duration::minutes(remind_min))
+            } else {
+                item_local - chrono::Duration::minutes(remind_min)
+            };
+
+            let fire_minute = remind_time.format("%Y-%m-%d %H:%M").to_string();
+            if fire_minute != current_minute { continue; }
+
+            // This reminder fires NOW
+            let diff = (item_local - remind_time).num_minutes().max(0);
+            let time_desc = if diff == 0 { "adesso!".to_string() }
+                else if diff < 60 { format!("tra {} minuti", diff) }
+                else {
+                    let h = diff / 60; let m = diff % 60;
+                    if m == 0 { format!("tra {} or{}", h, if h == 1 { "a" } else { "e" }) }
+                    else { format!("tra {}h {:02}min", h, m) }
+                };
+            let body = format!("{} — {} ({})", item_title, item_time, time_desc);
+
+            let app_clone = app.clone();
+            let body_clone = body.clone();
+            let _ = app.run_on_main_thread(move || {
+                let _ = app_clone.notification().builder()
+                    .title("LexFlow — Promemoria")
+                    .body(&body_clone)
+                    .show();
+            });
+            eprintln!("[LexFlow Cron] ✓ Reminder fired: {} → {}", item_title, fire_minute);
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2242,8 +2387,7 @@ pub fn run() {
             let _ = fs::remove_file(&old_path);
         }
     }
-    // data_dir_for_scheduler: su Android viene aggiornato nel setup() dopo aver
-    // risolto il path reale — lo scheduler parte solo lì. Su desktop si passa subito.
+    // data_dir_for_sync: used in setup() to perform initial notification sync.
     #[cfg(not(target_os = "android"))]
     let data_dir_for_scheduler = data_dir.clone();
 
@@ -2267,8 +2411,15 @@ pub fn run() {
         })
         .setup(move |app| {
             // ── NOTIFICATION PERMISSION (native, at startup) ──
-            // On macOS: request_permission() always triggers the native dialog if not yet decided.
-            // If already granted/denied, it's a no-op. Safe to call unconditionally.
+            // On macOS, permission is bound to the app's code signature. During development
+            // (ad-hoc signing), each rebuild changes the signature, causing macOS Notification
+            // Center to silently drop notifications. This is expected and resolves with a
+            // stable Apple Developer certificate in production builds.
+            //
+            // APPLE GUIDELINES FIX: if the user has explicitly Denied notifications,
+            // we must NOT call request_permission() again — macOS ignores the call and
+            // repeated attempts can cause the XPC daemon to permanently silence the app.
+            // Instead, log a message guiding the user to System Settings.
             {
                 use tauri_plugin_notification::NotificationExt;
                 let state = app.notification().permission_state();
@@ -2278,10 +2429,15 @@ pub fn run() {
                         eprintln!("[LexFlow] Notifications already granted ✓");
                     }
                     Ok(tauri_plugin_notification::PermissionState::Denied) => {
-                        eprintln!("[LexFlow] Notifications denied — requesting again...");
-                        let _ = app.notification().request_permission();
+                        // DO NOT call request_permission() here — Apple will ignore it
+                        // and may permanently silence the app's XPC notification daemon.
+                        eprintln!("[LexFlow] ⚠️ Notifications DENIED by user/system.");
+                        eprintln!("[LexFlow] → User must enable manually: System Settings → Notifications → LexFlow");
+                        // Emit to frontend so we can show an in-app banner
+                        let _ = app.emit("notification-permission-denied", ());
                     }
                     _ => {
+                        // Unknown/NotDetermined — safe to request
                         eprintln!("[LexFlow] Notifications unknown — requesting permission...");
                         let result = app.notification().request_permission();
                         eprintln!("[LexFlow] Permission request result: {:?}", result);
@@ -2289,22 +2445,54 @@ pub fn run() {
                 }
             }
 
-            // Su desktop lo scheduler parte subito con data_dir già risolto.
-            // Su Android parte dopo aver risolto il path reale (vedi sotto).
+            // ── AHEAD-OF-TIME SYNC: schedule all pending notifications with the OS ──
+            // On mobile: native AOT scheduling via sync_notifications()
+            // On desktop: no-op stub — the async cron job handles everything
             #[cfg(not(target_os = "android"))]
-            start_notification_scheduler(app.handle().clone(), data_dir_for_scheduler.clone());
+            sync_notifications(&app.handle(), &data_dir_for_scheduler);
+
+            // ── DESKTOP: App Nap prevention + async cron job ──────────────────
+            #[cfg(target_os = "macos")]
+            {
+                // Prevent macOS App Nap from freezing the async timer when the
+                // window is hidden/unfocused.  We use NSProcessInfo FFI to declare
+                // a "user-initiated" activity that keeps the process alive.
+                use objc::{msg_send, sel, sel_impl, class};
+                use cocoa::foundation::NSString as NSStringTrait;
+                unsafe {
+                    let info: *mut objc::runtime::Object = msg_send![class!(NSProcessInfo), processInfo];
+                    let reason = cocoa::foundation::NSString::alloc(cocoa::base::nil)
+                        .init_str("LexFlow notification cron job must not be suspended");
+                    // NSActivityUserInitiated | NSActivityIdleSystemSleepDisabled = 0x00FFFFFF
+                    let _activity: *mut objc::runtime::Object = msg_send![info,
+                        beginActivityWithOptions: 0x00FFFFFFu64
+                        reason: reason
+                    ];
+                    // We intentionally leak _activity — it must live for the entire process lifetime.
+                    eprintln!("[LexFlow] macOS App Nap disabled via NSProcessInfo ✓");
+                }
+            }
+
+            // Launch the desktop cron job (single async task, zero threads)
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    desktop_cron_job(app_handle).await;
+                });
+            }
 
             #[cfg(target_os = "android")]
             {
                 // Risolvi il path reale tramite Tauri PathResolver — nessun hardcoded path.
                 // app_data_dir() = /data/data/<pkg>/files/ (privato, senza root).
-                // Lo scheduler parte DOPO con il path corretto: nessuna race condition.
                 if let Ok(real_dir) = app.path().app_data_dir() {
                     let vault_dir = real_dir.join("lexflow-vault");
                     let _ = fs::create_dir_all(&vault_dir);
                     *app.state::<AppState>().data_dir.lock().unwrap() = vault_dir.clone();
                     *app.state::<AppState>().security_dir.lock().unwrap() = real_dir.clone();
-                    start_notification_scheduler(app.handle().clone(), vault_dir);
+                    // ── AHEAD-OF-TIME SYNC on Android ──
+                    sync_notifications(&app.handle(), &vault_dir);
                 }
             }
 

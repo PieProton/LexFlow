@@ -1,6 +1,6 @@
 [package]
 name = "lexflow"
-version = "2.7.0"
+version = "3.0.0"
 description = "LexFlow — Gestionale Studio Legale con Crittografia Zero-Knowledge"
 authors = ["Pietro Longo"]
 edition = "2021"
@@ -34,7 +34,7 @@ dirs = "5"
 whoami = "1"
 rand = "0.8"
 hex = "0.4"
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "time"] }
 
 # Security (MIL-GRADE) — tutte le piattaforme
 aes-gcm = "0.10"
@@ -50,6 +50,16 @@ ed25519-dalek = "2.0"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 open = "5"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
+
+# macOS-only: App Nap prevention via NSProcessInfo FFI
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2.7"
+cocoa = "0.24.1"
+
+# time crate: needed by tauri-plugin-notification Schedule::At (OffsetDateTime)
+[dependencies.time]
+version = "0.3"
+features = ["local-offset"]
 
 # Android: keystore sicuro nativo via android_keystore
 [target.'cfg(target_os = "android")'.dependencies]

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "LexFlow",
-  "version": "2.7.0",
+  "version": "3.0.0",
   "identifier": "com.pietrolongo.lexflow",
   "build": {
     "frontendDist": "../client/dist",
@@ -27,7 +27,8 @@
         "fullscreen": false,
         "transparent": false,
         "visible": true,
-        "backgroundColor": "#08090f"
+        "backgroundColor": "#08090f",
+        "backgroundThrottling": "disabled"
       }
     ]
   },
@@ -45,6 +46,11 @@
       "icons/icon.ico"
     ],
     "category": "Business",
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "10.15",
+      "infoPlist": "Info.plist"
+    },
     "android": {
       "minSdkVersion": 24,
       "versionCode": 240
