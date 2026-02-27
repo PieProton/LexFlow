@@ -28,7 +28,7 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4
 
-      - name: Rimuovi config cargo locale (path lld locali non validi su CI)
+      - name: Rimuovi config cargo locale
         run: rm -f src-tauri/.cargo/config.toml
         shell: bash
 
@@ -53,14 +53,25 @@ jobs:
           npm install
           cd client && npm install --legacy-peer-deps
 
+      - name: Decodifica Certificato Windows
+        if: matrix.platform == 'windows-latest'
+        env:
+          CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CERT_BASE64)) {
+            Write-Host "Nessun certificato Windows trovato nei segreti."
+          } else {
+            [IO.File]::WriteAllBytes("windows-cert.pfx", [Convert]::FromBase64String($env:CERT_BASE64))
+            Write-Host "Certificato Windows decodificato con successo."
+          }
+        shell: pwsh
+
       - name: Compila e Pubblica
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Per firmare macOS, aggiungi questi segreti su GitHub Settings > Secrets:
-          # APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
-          # APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
-          # Per ora la build e' senza firma (funziona ma mostra avviso su macOS).
+          TAURI_SIGN_WINDOWS_CERT_PATH: ${{ secrets.WINDOWS_CERT_BASE64 != '' && 'windows-cert.pfx' || '' }}
+          TAURI_SIGN_WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "LexFlow ${{ github.ref_name }}"
@@ -124,6 +135,7 @@ jobs:
 
       - name: Configura Gradle per CI
         run: |
+          echo "" >> src-tauri/gen/android/gradle.properties
           echo "org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=512m" >> src-tauri/gen/android/gradle.properties
           echo "org.gradle.daemon=false" >> src-tauri/gen/android/gradle.properties
           echo "org.gradle.parallel=false" >> src-tauri/gen/android/gradle.properties
@@ -134,7 +146,7 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             mkdir -p src-tauri/gen/android/app/
-            echo "$KEYSTORE_BASE64" | base64 --decode > src-tauri/gen/android/app/lexflow-release.keystore
+            echo "$KEYSTORE_BASE64" | base64 --decode > src-tauri/gen/android/app/release.keystore
             echo "Keystore decodificato con successo."
           else
             echo "Nessun keystore trovato. Build non firmata."
@@ -143,6 +155,7 @@ jobs:
       - name: Build Android APK
         env:
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          TAURI_ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && 'src-tauri/gen/android/app/release.keystore' || '' }}
           TAURI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           TAURI_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           TAURI_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
