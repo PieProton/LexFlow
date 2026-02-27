@@ -42,6 +42,7 @@ const LICENSE_SENTINEL_FILE: &str = ".license-sentinel";
 const BURNED_KEYS_FILE: &str = ".burned-keys";
 // Biometric marker file — avoids keychain access (which triggers Touch ID popup)
 // just to check if bio credentials exist. Only actual bio_login reads the keychain.
+#[cfg(not(target_os = "android"))]
 const BIO_MARKER_FILE: &str = ".bio-enabled";
 
 #[allow(dead_code)]
@@ -2714,11 +2715,11 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
+        .run(|_app, event| {
             // macOS: click sull'icona nel Dock quando la finestra è nascosta → riaprila
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
-                if let Some(w) = app.get_webview_window("main") {
+                if let Some(w) = _app.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();
                 }

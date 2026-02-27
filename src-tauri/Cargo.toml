@@ -1,6 +1,6 @@
 [package]
 name = "lexflow"
-version = "3.0.2"
+version = "3.0.3"
 description = "LexFlow — Gestionale Studio Legale con Crittografia Zero-Knowledge"
 authors = ["Pietro Longo"]
 edition = "2021"
@@ -15,7 +15,7 @@ tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
 # Core & Serialization
-tauri = { version = "2.10.0", features = [] }
+tauri = { version = "2.10.0", features = ["macos-private-api"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
