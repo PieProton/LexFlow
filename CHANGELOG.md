@@ -4,6 +4,34 @@ Formato: [SemVer](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ---
 
+## [3.5.0] — 2026-02-27
+
+### Aggiunto
+- **CRM Legale completo** — 4 nuove pagine: Time Tracking, Fatturazione, Rubrica Contatti, Conflict Check
+- **Time Tracking** — Timer live con pratica associata, inserimento manuale, griglia settimanale ore, esportazione sessioni. `practiceName` salvato al momento dello start (fix: lookup post-autolock rimosso)
+- **Fatturazione** — CRUD fatture, calcolo automatico CPA 4% + IVA 22%, generazione PDF via jsPDF/autotable. `calcTotals` refactored in funzione standalone (fix: spread overwrite)
+- **Rubrica Contatti** — 6 tipologie (cliente, controparte, teste, CTU, avvocato, altro), ricerca/filtro, panel dettaglio, pratiche collegate
+- **Conflict Check** — Ricerca debounced su parti di tutte le pratiche + rubrica contatti, con indicazione del ruolo
+- **8 nuovi comandi Rust** — `load_time_logs`, `save_time_logs`, `load_invoices`, `save_invoices`, `load_contacts`, `save_contacts`, `check_conflict` (fix tipo di ritorno), `select_folder` separato da `select_file`
+- **`select_folder`** — Nuovo comando distinto che apre picker directory (fix: usava il picker file)
+
+### Fix (Security Audit — 10 bug totali confermati)
+- **`check_conflict("")`** — restituiva tipo errato su stringa vuota; ora ritorna `[]` correttamente
+- **`BillingPage.calcTotals`** — spread overwrite azzerava i totali; refactored in funzione standalone
+- **`TimeTrackingPage` practiceName** — lookup post-autolock restituiva undefined; salvato al momento dello start
+- **Autolock biometric popup** — focus rubato al login manuale; gate popup solo se `!autoLocked`
+- **HamburgerButton posizione** — era bottom-right; spostato top-right per standard UX mobile
+- **Mobile sidebar overflow** — contenuto fuori schermo; aggiunto `overflow-y-auto` + `max-h-screen`
+- **Sidebar ordine non gerarchico** — riordinato: Quotidiano → Studio → Amministrazione → Configurazione
+- **PracticeDetail nessun fallback password** — biometric gate senza fallback; aggiunto input password
+- **`select_folder` usava picker file** — apertura errata; separato in comando dedicato `select_folder`
+- **Desktop sidebar spacing** — spazio eccessivo tra voci; ridotto a layout compatto
+
+### Audit Finale
+- **~9.600+ righe analizzate** su 29 file — 0 nuovi bug trovati
+
+---
+
 ## [3.0.0] — 2026-02-26
 
 ### ⚠️ Breaking Changes
