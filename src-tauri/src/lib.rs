@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf, sync::Mutex, time::{Instant, Duration}};
 use tauri::{Manager, State, AppHandle, Emitter};
@@ -1877,9 +1879,17 @@ async fn select_file(app: AppHandle) -> Result<Option<Value>, String> {
 async fn select_folder(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let (tx, rx) = tokio::sync::oneshot::channel();
+    // Android non supporta pick_folder — fallback a pick_file
+    #[cfg(not(target_os = "android"))]
     app.dialog()
         .file()
         .pick_folder(move |folder_path| {
+            let _ = tx.send(folder_path);
+        });
+    #[cfg(target_os = "android")]
+    app.dialog()
+        .file()
+        .pick_file(move |folder_path| {
             let _ = tx.send(folder_path);
         });
     let folder = rx.await.map_err(|e| format!("Dialog error: {}", e))?;
@@ -2892,11 +2902,11 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app, event| {
+        .run(|#[allow(unused)] app, event| {
             // macOS: click sull'icona nel Dock quando la finestra è nascosta → riaprila
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
-                if let Some(w) = _app.get_webview_window("main") {
+                if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
