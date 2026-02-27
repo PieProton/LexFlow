@@ -1037,7 +1037,16 @@ export default function AgendaPage({ agendaEvents, onSaveAgenda, practices, onSe
 
   const handleDelete = (id) => { onSaveAgenda(events.filter(e => e.id !== id)); setModalEvent(null); toast.success('Eliminato'); };
   const handleToggle = (id) => onSaveAgenda(events.map(e => e.id === id ? {...e, completed: !e.completed} : e));
-  const openAdd = (date, tS, tE) => setModalEvent({ event: { date: date || toDateStr(new Date()), timeStart: tS || '09:00', timeEnd: tE || '10:00' }, isNew: true });
+  const openAdd = (date, tS, tE) => {
+    // Ora attuale arrotondata ai prossimi 30 min
+    const n = new Date();
+    let mm = n.getMinutes(), hh = n.getHours();
+    mm = mm < 30 ? 30 : 0;
+    if (mm === 0) hh = (hh + 1) % 24;
+    const nowStart = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+    const nowEnd = `${String((hh + 1) % 24).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+    setModalEvent({ event: { date: date || toDateStr(new Date()), timeStart: tS || nowStart, timeEnd: tE || nowEnd }, isNew: true });
+  };
   const openEdit = (ev) => ev.autoSync && ev.practiceId && onSelectPractice ? onSelectPractice(ev.practiceId) : setModalEvent({ event: ev, isNew: false });
   
   const views = [ 

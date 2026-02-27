@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import { Briefcase, CalendarDays, CalendarClock, Coffee, Sun, Sunrise, Check, ChevronDown } from 'lucide-react';
+import { Briefcase, CalendarDays, CalendarClock, Coffee, Sun, Sunrise, ChevronDown } from 'lucide-react';
 
 const CAT_COLOR = c => c === 'udienza' ? '#d4a940' : c === 'scadenza' ? '#EF6B6B' : c === 'riunione' ? '#5B8DEF' : c === 'studio' ? '#8B7CF6' : c === 'personale' ? '#2DD4BF' : '#7c8099';
 
@@ -230,11 +230,6 @@ export default function Dashboard({ practices, agendaEvents, onNavigate, onSelec
           <div>
             <div className="flex items-baseline gap-2">
               <p className="text-2xl font-black text-white tabular-nums">{stats.todayRemaining}</p>
-              {stats.todayCompleted > 0 && (
-                <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-0.5">
-                  <Check size={10} /> {stats.todayCompleted} fatt{stats.todayCompleted === 1 ? 'o' : 'i'}
-                </span>
-              )}
             </div>
             <p className="text-[10px] text-text-muted font-bold uppercase tracking-wider">
               Impegni Rimanenti Oggi
