@@ -19,6 +19,10 @@ import PracticesList from './pages/PracticesList';
 import DeadlinesPage from './pages/DeadlinesPage';
 import AgendaPage from './pages/AgendaPage';
 import SettingsPage from './pages/SettingsPage';
+import ConflictCheckPage from './pages/ConflictCheckPage';
+import TimeTrackingPage from './pages/TimeTrackingPage';
+import BillingPage from './pages/BillingPage';
+import ContactsPage from './pages/ContactsPage';
 
 export default function App() {
   const navigate = useNavigate();
@@ -470,6 +474,22 @@ export default function App() {
               
               <Route path="/settings" element={<SettingsPage onLock={handleManualLock} />} />
               <Route path="/sicurezza" element={<SettingsPage onLock={handleManualLock} />} />
+              
+              <Route path="/conflitti" element={
+                <ConflictCheckPage onSelectPractice={handleSelectPractice} />
+              } />
+              
+              <Route path="/ore" element={
+                <TimeTrackingPage practices={practices} />
+              } />
+              
+              <Route path="/parcelle" element={
+                <BillingPage practices={practices} />
+              } />
+              
+              <Route path="/contatti" element={
+                <ContactsPage practices={practices} onSelectPractice={handleSelectPractice} />
+              } />
             </Routes>
           </div>
         </main>

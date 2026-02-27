@@ -829,6 +829,158 @@ fn save_agenda(state: State<AppState>, agenda: Value) -> Result<bool, String> {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  CONFLICT CHECK (v3.2.0)
+// ═══════════════════════════════════════════════════════════
+
+/// Searches ALL practices (active + archived) for a name match in client,
+/// counterparty, description, court, and roles[].contactName fields.
+/// Returns an array of matching practices with the matched field highlighted.
+#[tauri::command]
+fn check_conflict(state: State<AppState>, name: String) -> Result<Value, String> {
+    if name.trim().is_empty() {
+        return Ok(json!({"practiceMatches": [], "contactMatches": []}));
+    }
+    let vault = read_vault_internal(&state)?;
+    let practices = vault.get("practices").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+    let contacts = vault.get("contacts").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+    let query = name.trim().to_lowercase();
+    let mut results: Vec<Value> = Vec::new();
+
+    for p in &practices {
+        let mut matched_fields: Vec<String> = Vec::new();
+
+        // Check main text fields
+        for field in &["client", "counterparty", "description", "court", "object"] {
+            if let Some(val) = p.get(field).and_then(|v| v.as_str()) {
+                if val.to_lowercase().contains(&query) {
+                    matched_fields.push(field.to_string());
+                }
+            }
+        }
+
+        // Check roles array (linked contacts)
+        if let Some(roles) = p.get("roles").and_then(|r| r.as_array()) {
+            for role in roles {
+                if let Some(cid) = role.get("contactId").and_then(|c| c.as_str()) {
+                    // Resolve contact name from contacts registry
+                    if let Some(contact) = contacts.iter().find(|c| c.get("id").and_then(|i| i.as_str()) == Some(cid)) {
+                        if let Some(cname) = contact.get("name").and_then(|n| n.as_str()) {
+                            if cname.to_lowercase().contains(&query) {
+                                let role_label = role.get("role").and_then(|r| r.as_str()).unwrap_or("contatto");
+                                matched_fields.push(format!("ruolo:{}", role_label));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !matched_fields.is_empty() {
+            results.push(json!({
+                "practice": p,
+                "matchedFields": matched_fields,
+            }));
+        }
+    }
+
+    // Also search contacts themselves (find the person even if not linked to a practice yet)
+    let mut contact_matches: Vec<Value> = Vec::new();
+    for c in &contacts {
+        let mut cmatch = false;
+        for field in &["name", "fiscalCode", "vatNumber", "email", "pec", "phone"] {
+            if let Some(val) = c.get(field).and_then(|v| v.as_str()) {
+                if val.to_lowercase().contains(&query) {
+                    cmatch = true;
+                    break;
+                }
+            }
+        }
+        if cmatch {
+            // Find all practices referencing this contact
+            let cid = c.get("id").and_then(|i| i.as_str()).unwrap_or("");
+            let linked: Vec<String> = practices.iter().filter_map(|p| {
+                let client_id = p.get("clientId").and_then(|i| i.as_str()).unwrap_or("");
+                let counter_id = p.get("counterpartyId").and_then(|i| i.as_str()).unwrap_or("");
+                let in_roles = p.get("roles").and_then(|r| r.as_array())
+                    .map(|roles| roles.iter().any(|r| r.get("contactId").and_then(|i| i.as_str()) == Some(cid)))
+                    .unwrap_or(false);
+                if client_id == cid || counter_id == cid || in_roles {
+                    Some(p.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string())
+                } else {
+                    None
+                }
+            }).collect();
+            contact_matches.push(json!({
+                "contact": c,
+                "linkedPracticeIds": linked,
+            }));
+        }
+    }
+
+    Ok(json!({
+        "practiceMatches": results,
+        "contactMatches": contact_matches,
+    }))
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TIME TRACKING (v3.3.0)
+// ═══════════════════════════════════════════════════════════
+
+#[tauri::command]
+fn load_time_logs(state: State<AppState>) -> Result<Value, String> {
+    let vault = read_vault_internal(&state)?;
+    Ok(vault.get("timeLogs").cloned().unwrap_or(json!([])))
+}
+
+#[tauri::command]
+fn save_time_logs(state: State<AppState>, logs: Value) -> Result<bool, String> {
+    let _guard = state.write_mutex.lock().unwrap();
+    let mut vault = read_vault_internal(&state)?;
+    vault["timeLogs"] = logs;
+    write_vault_internal(&state, &vault)?;
+    Ok(true)
+}
+
+// ═══════════════════════════════════════════════════════════
+//  INVOICES / BILLING (v3.4.0)
+// ═══════════════════════════════════════════════════════════
+
+#[tauri::command]
+fn load_invoices(state: State<AppState>) -> Result<Value, String> {
+    let vault = read_vault_internal(&state)?;
+    Ok(vault.get("invoices").cloned().unwrap_or(json!([])))
+}
+
+#[tauri::command]
+fn save_invoices(state: State<AppState>, invoices: Value) -> Result<bool, String> {
+    let _guard = state.write_mutex.lock().unwrap();
+    let mut vault = read_vault_internal(&state)?;
+    vault["invoices"] = invoices;
+    write_vault_internal(&state, &vault)?;
+    Ok(true)
+}
+
+// ═══════════════════════════════════════════════════════════
+//  CONTACTS REGISTRY (v3.5.0)
+// ═══════════════════════════════════════════════════════════
+
+#[tauri::command]
+fn load_contacts(state: State<AppState>) -> Result<Value, String> {
+    let vault = read_vault_internal(&state)?;
+    Ok(vault.get("contacts").cloned().unwrap_or(json!([])))
+}
+
+#[tauri::command]
+fn save_contacts(state: State<AppState>, contacts: Value) -> Result<bool, String> {
+    let _guard = state.write_mutex.lock().unwrap();
+    let mut vault = read_vault_internal(&state)?;
+    vault["contacts"] = contacts;
+    write_vault_internal(&state, &vault)?;
+    Ok(true)
+}
+
+// ═══════════════════════════════════════════════════════════
 //  BIOMETRICS
 // ═══════════════════════════════════════════════════════════
 
@@ -1719,6 +1871,19 @@ async fn select_file(app: AppHandle) -> Result<Option<Value>, String> {
             .unwrap_or_else(|| "file".to_string());
         json!({"name": name, "path": path.to_string_lossy()})
     }))
+}
+
+#[tauri::command]
+async fn select_folder(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .pick_folder(move |folder_path| {
+            let _ = tx.send(folder_path);
+        });
+    let folder = rx.await.map_err(|e| format!("Dialog error: {}", e))?;
+    Ok(folder.map(|f| f.into_path().unwrap().to_string_lossy().to_string()))
 }
 
 #[tauri::command]
@@ -2674,6 +2839,17 @@ pub fn run() {
             load_agenda,
             save_agenda,
             get_summary,
+            // Conflict Check (v3.2.0)
+            check_conflict,
+            // Time Tracking (v3.3.0)
+            load_time_logs,
+            save_time_logs,
+            // Invoices / Billing (v3.4.0)
+            load_invoices,
+            save_invoices,
+            // Contacts Registry (v3.5.0)
+            load_contacts,
+            save_contacts,
             // Settings
             get_settings,
             save_settings,
@@ -2685,6 +2861,7 @@ pub fn run() {
             clear_bio,
             // Files
             select_file,
+            select_folder,
             open_path,
             export_pdf,
             // Notifications

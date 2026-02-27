@@ -15,6 +15,9 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
   const [biometricVerified, setBiometricVerified] = useState(false);
   const [bioAttempted, setBioAttempted] = useState(false);
   const [showExportWarning, setShowExportWarning] = useState(false);
+  const [showPasswordFallback, setShowPasswordFallback] = useState(false);
+  const [practicePassword, setPracticePassword] = useState('');
+  const [practicePasswordError, setPracticePasswordError] = useState('');
   
   // Stati per i form
   const [newNote, setNewNote] = useState('');
@@ -56,6 +59,24 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
     }
   };
 
+  // Password fallback — verifica la master password per accedere al fascicolo
+  const handlePasswordFallback = async (e) => {
+    e.preventDefault();
+    if (!practicePassword) return;
+    setPracticePasswordError('');
+    try {
+      const result = await window.api.verifyVaultPassword(practicePassword);
+      if (result && result.valid) {
+        setPracticePassword('');
+        setBiometricVerified(true);
+      } else {
+        setPracticePasswordError('Password errata');
+      }
+    } catch (err) {
+      setPracticePasswordError('Errore verifica password');
+    }
+  };
+
   // Se il fascicolo è protetto e non verificato, mostra schermata di blocco
   if (practice.biometricProtected && !biometricVerified) {
     return (
@@ -70,20 +91,54 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
           </div>
         </div>
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-center space-y-6">
+          <div className="text-center space-y-6 max-w-xs">
             <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto border border-primary/20 animate-pulse">
               <Fingerprint size={36} className="text-primary" />
             </div>
             <div>
               <h2 className="text-xl font-bold text-white mb-2">Verifica Identità</h2>
-              <p className="text-sm text-text-muted max-w-xs">
-                {bioAttempted ? 'Autenticazione non riuscita. Riprova.' : 'Autenticazione biometrica in corso...'}
+              <p className="text-sm text-text-muted">
+                {bioAttempted ? 'Autenticazione non riuscita. Riprova o usa la password.' : 'Autenticazione biometrica in corso...'}
               </p>
             </div>
-            {bioAttempted && (
-              <button onClick={retryBiometric} className="btn-primary px-8 py-3 text-sm">
-                <Fingerprint size={18} /> Riprova
-              </button>
+            {bioAttempted && !showPasswordFallback && (
+              <div className="space-y-3">
+                <button onClick={retryBiometric} className="btn-primary px-8 py-3 text-sm w-full">
+                  <Fingerprint size={18} /> Riprova Biometria
+                </button>
+                <button 
+                  onClick={() => setShowPasswordFallback(true)} 
+                  className="w-full text-text-dim hover:text-white text-xs font-semibold transition-colors py-2"
+                >
+                  Usa la Master Password
+                </button>
+              </div>
+            )}
+            {showPasswordFallback && (
+              <form onSubmit={handlePasswordFallback} className="space-y-3 text-left">
+                <label className="text-[10px] font-bold text-text-dim uppercase tracking-[2px] ml-1 block">Master Password</label>
+                <input
+                  type="password"
+                  className="input-field w-full py-3 px-4 rounded-xl bg-white/5 border-white/10 text-white placeholder:text-white/20 text-sm"
+                  placeholder="Inserisci la password..."
+                  value={practicePassword}
+                  onChange={e => setPracticePassword(e.target.value)}
+                  autoFocus
+                />
+                {practicePasswordError && (
+                  <p className="text-red-400 text-[11px] font-semibold">{practicePasswordError}</p>
+                )}
+                <button type="submit" className="btn-primary w-full py-3 text-sm">
+                  <Lock size={16} /> Sblocca Fascicolo
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => { setShowPasswordFallback(false); setPracticePassword(''); setPracticePasswordError(''); }} 
+                  className="w-full text-text-dim hover:text-white text-xs font-semibold transition-colors py-2"
+                >
+                  Torna alla Biometria
+                </button>
+              </form>
             )}
           </div>
         </div>
@@ -138,11 +193,9 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
   // --- Handlers: PDF Upload ---
   const handleUploadPDF = async () => {
     try {
-      const result = await window.api.selectFolder(); // returns path string or null
-      if (result) {
-        // Supporta separatori sia Unix (/) che Windows (\)
-        const fileName = result.split(/[\\/]/).pop() || result;
-        const attachments = [...(practice.attachments || []), { name: fileName, path: result, addedAt: new Date().toISOString() }];
+      const result = await window.api.selectFile();
+      if (result && result.name && result.path) {
+        const attachments = [...(practice.attachments || []), { name: result.name, path: result.path, addedAt: new Date().toISOString() }];
         update({ attachments });
         toast.success('Documento aggiunto al vault');
       }

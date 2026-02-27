@@ -70,13 +70,30 @@ window.api = {
   // PERF FIX (Gemini L2-4): server-side summary computation — no more full client-side iteration
   getSummary: () => safeInvoke('get_summary'),
 
+  // Conflict Check (v3.2.0)
+  checkConflict: (name) => safeInvoke('check_conflict', { name }),
+
+  // Time Tracking (v3.3.0)
+  loadTimeLogs: () => safeInvoke('load_time_logs'),
+  saveTimeLogs: (logs) => safeInvoke('save_time_logs', { logs }),
+
+  // Invoices / Billing (v3.4.0)
+  loadInvoices: () => safeInvoke('load_invoices'),
+  saveInvoices: (invoices) => safeInvoke('save_invoices', { invoices }),
+
+  // Contacts Registry (v3.5.0)
+  loadContacts: () => safeInvoke('load_contacts'),
+  saveContacts: (contacts) => safeInvoke('save_contacts', { contacts }),
+
   // Settings
   getSettings: () => safeInvoke('get_settings'),
   saveSettings: (settings) => safeInvoke('save_settings', { settings }),
 
   // Files
-  // select_file returns { name, path } or null — normalize to path string or null
-  selectFolder: () => safeInvoke('select_file').then(res => (res && res.path) ? res.path : null),
+  // select_file returns { name, path } or null — normalize to object or null
+  selectFile: () => safeInvoke('select_file').then(res => res || null),
+  // select_folder returns a folder path string or null
+  selectFolder: () => safeInvoke('select_folder').then(res => res || null),
   openPath: (path) => safeInvoke('open_path', { path }),
   exportPDF: (arrayBuffer, defaultName) => safeInvoke('export_pdf', { data: toBytes(arrayBuffer), defaultName }),
 

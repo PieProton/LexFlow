@@ -68,15 +68,19 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
             const saved = await window.api.hasBioSaved();
             setBioSaved(saved);
 
-            // Auto-trigger biometria SEMPRE se le credenziali sono salvate.
-            // Sia all'avvio normale che dopo autolock: il popup di sistema
-            // appare subito — l'utente mette il dito / Face ID e sblocca
-            // senza dover cliccare nulla.
-            if (saved && !bioTriggered.current) {
+            // Auto-trigger biometria SOLO all'avvio manuale (non dopo autolock).
+            // Dopo autolock l'utente sta lavorando su altro — un popup biometrico
+            // di sistema ruberebbe il focus ed è disturbante. Il pulsante "Accedi
+            // con Biometria" resta visibile per sbloccare quando l'utente torna.
+            if (saved && !bioTriggered.current && !autoLocked) {
               bioTriggered.current = true;
               // Nascondi il form mentre il popup biometrico di sistema appare
               setShowPasswordField(false);
               setTimeout(() => handleBioLogin(true), 400);
+            } else if (saved && autoLocked) {
+              // Autolock: mostra il pulsante biometria, ma NON triggera il popup.
+              // L'utente cliccherà quando torna a usare l'app.
+              setShowPasswordField(false);
             } else if (!saved) {
               setShowPasswordField(true);
             }

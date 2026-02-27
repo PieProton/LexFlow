@@ -487,6 +487,14 @@ function TodayView({ events, onToggle, onEdit, onAdd, onSave, activeFilters }) {
                           onClick={e => {
                             // Non aprire edit se abbiamo appena draggato
                             if (e.currentTarget._didDrag) { e.currentTarget._didDrag = false; return; }
+                            // Alt+click → duplica
+                            if (e.altKey) {
+                              e.stopPropagation();
+                              const dup = { ...ev, id: genId(), title: ev.title + ' (copia)', completed: false };
+                              onSave(dup);
+                              toast.success('Impegno duplicato');
+                              return;
+                            }
                             onEdit(ev);
                           }}
                           className={`agenda-event absolute rounded-lg px-3 py-1.5 cursor-grab transition-all duration-200 hover:scale-[1.01] hover:z-20
@@ -551,6 +559,42 @@ function TodayView({ events, onToggle, onEdit, onAdd, onSave, activeFilters }) {
                             document.addEventListener('mouseup', onUp);
                           }}
                         >
+                          {/* Resize handle top */}
+                          <div
+                            className="resize-handle absolute top-0 left-0 right-0 h-2 cursor-ns-resize group/resizetop"
+                            onMouseDown={e => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              const startY = e.clientY;
+                              const origStart = ev.startMin;
+                              const evEl = e.target.closest('[data-evid]');
+                              let newStart = origStart;
+                              const onMove = (me) => {
+                                const deltaY = me.clientY - startY;
+                                const deltaMin = Math.round(deltaY / 1);
+                                newStart = Math.min(origStart + deltaMin, ev.endMin - 15);
+                                newStart = Math.max(0, Math.round(newStart / 5) * 5);
+                                if (evEl) {
+                                  evEl.style.top = `${(newStart / 60) * 60}px`;
+                                  evEl.style.height = `${Math.max(((ev.endMin - newStart) / 60) * 60, 32)}px`;
+                                }
+                              };
+                              const onUp = () => {
+                                document.removeEventListener('mousemove', onMove);
+                                document.removeEventListener('mouseup', onUp);
+                                if (evEl) evEl._didDrag = true;
+                                if (newStart !== origStart) {
+                                  const sh = Math.floor(newStart / 60);
+                                  const sm = newStart % 60;
+                                  onSave({ ...ev, timeStart: fmtTime(sh, sm) });
+                                }
+                              };
+                              document.addEventListener('mousemove', onMove);
+                              document.addEventListener('mouseup', onUp);
+                            }}
+                          >
+                            <div className="mx-auto w-8 h-0.5 bg-white/10 group-hover/resizetop:bg-white/30 rounded-full mt-0.5 transition" />
+                          </div>
                           <div className="flex justify-between items-start h-full">
                                <div className="flex items-start gap-2 min-w-0 flex-1">
                                   {/* Checkbox completamento */}
@@ -706,6 +750,12 @@ function WeekView({ events, onEdit, onAdd, onSave, activeFilters }) {
                         onClick={e => {
                           e.stopPropagation();
                           if (e.currentTarget._didDrag) { e.currentTarget._didDrag = false; return; }
+                          if (e.altKey) {
+                            const dup = { ...ev, id: genId(), title: ev.title + ' (copia)', completed: false };
+                            onSave(dup);
+                            toast.success('Impegno duplicato');
+                            return;
+                          }
                           onEdit(ev);
                         }}
                         onMouseDown={e => {
@@ -772,6 +822,41 @@ function WeekView({ events, onEdit, onAdd, onSave, activeFilters }) {
                           document.addEventListener('mousemove', onMove);
                           document.addEventListener('mouseup', onUp);
                         }}>
+                        {/* Resize handle top */}
+                        <div className="resize-handle absolute top-0 left-0 right-0 h-1.5 cursor-ns-resize"
+                          onMouseDown={e => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            const startY = e.clientY;
+                            const [tsh,tsm] = ev.timeStart.split(':').map(Number);
+                            const [teh,tem] = ev.timeEnd.split(':').map(Number);
+                            const origStart = tsh*60+tsm;
+                            const evEndMin = teh*60+tem;
+                            const evEl = e.target.closest('.week-ev');
+                            let newStart = origStart;
+                            const onMove = (me) => {
+                              const dY = me.clientY - startY;
+                              newStart = Math.min(origStart + Math.round(dY/1), evEndMin - 15);
+                              newStart = Math.max(0, Math.round(newStart / 5) * 5);
+                              if (evEl) {
+                                evEl.style.top = `${(newStart / 60) * 60}px`;
+                                evEl.style.height = `${Math.max(((evEndMin - newStart)/60)*60, 20)}px`;
+                              }
+                            };
+                            const onUp = () => {
+                              document.removeEventListener('mousemove', onMove);
+                              document.removeEventListener('mouseup', onUp);
+                              if (evEl) evEl._didDrag = true;
+                              if (newStart !== origStart) {
+                                const nh = Math.floor(newStart/60);
+                                const nm = newStart%60;
+                                onSave({ ...ev, timeStart: fmtTime(nh, nm) });
+                              }
+                            };
+                            document.addEventListener('mousemove', onMove);
+                            document.addEventListener('mouseup', onUp);
+                          }}
+                        />
                         <div className="font-bold truncate leading-tight flex items-center gap-1">{ev.title}{ev.remindMinutes != null && <BellRing size={8} className="text-amber-400 flex-shrink-0" />}</div>
                         {height >= 30 && <div className="opacity-80 text-[9px]">{ev.timeStart}</div>}
                         {/* Resize handle bottom */}

@@ -11,7 +11,8 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Briefcase, CalendarClock,
-  CalendarDays, Settings, Lock, ShieldCheck, X, Menu
+  CalendarDays, Settings, Lock, ShieldCheck, X, Menu,
+  Shield, Clock, Receipt, Users
 } from 'lucide-react';
 import logo from '../assets/logo.png';
 
@@ -30,22 +31,40 @@ export function useIsMobile(breakpoint = 1024) {
 
 // ── Nav items per il Liquid Curtain (mobile) ───────────────────────────────
 const navItemsMobile = [
-  { path: '/',         label: 'Dashboard',    icon: LayoutDashboard },
-  { path: '/pratiche', label: 'Fascicoli',    icon: Briefcase },
-  { path: '/scadenze', label: 'Scadenze',     icon: CalendarClock },
-  { path: '/agenda',   label: 'Agenda',       icon: CalendarDays },
-  { path: '/settings', label: 'Impostazioni', icon: Settings },
+  { path: '/',           label: 'Dashboard',    icon: LayoutDashboard },
+  { path: '/agenda',     label: 'Agenda',       icon: CalendarDays },
+  { path: '/scadenze',   label: 'Scadenze',     icon: CalendarClock },
+  { path: '/pratiche',   label: 'Fascicoli',    icon: Briefcase },
+  { path: '/conflitti',  label: 'Conflitti',    icon: Shield },
+  { path: '/ore',        label: 'Ore',          icon: Clock },
+  { path: '/parcelle',   label: 'Parcelle',     icon: Receipt },
+  { path: '/contatti',   label: 'Contatti',     icon: Users },
+  { path: '/settings',   label: 'Impostazioni', icon: Settings },
 ];
 
 // ── Nav sections per la sidebar desktop ──────────────────────────────────
 const sections = [
   { items: [{ path: '/', label: 'Dashboard', icon: LayoutDashboard }] },
   {
-    title: 'Menu Principale',
+    title: 'Quotidiano',
     items: [
-      { path: '/pratiche', label: 'Fascicoli', icon: Briefcase },
-      { path: '/scadenze', label: 'Scadenze',  icon: CalendarClock },
       { path: '/agenda',   label: 'Agenda',    icon: CalendarDays },
+      { path: '/scadenze', label: 'Scadenze',  icon: CalendarClock },
+    ],
+  },
+  {
+    title: 'Studio',
+    items: [
+      { path: '/pratiche',  label: 'Fascicoli',  icon: Briefcase },
+      { path: '/conflitti', label: 'Conflitti',   icon: Shield },
+      { path: '/contatti',  label: 'Contatti',    icon: Users },
+    ],
+  },
+  {
+    title: 'Amministrazione',
+    items: [
+      { path: '/ore',       label: 'Time Track', icon: Clock },
+      { path: '/parcelle',  label: 'Parcelle',   icon: Receipt },
     ],
   },
   {
@@ -161,11 +180,11 @@ function DesktopSidebar({ version, onLock }) {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-4 py-2 space-y-8 overflow-y-auto custom-scrollbar">
+      <nav className="flex-1 px-4 py-2 space-y-5 overflow-y-auto custom-scrollbar">
         {sections.map((section, i) => (
-          <div key={i} className="space-y-1.5">
+          <div key={i} className="space-y-1">
             {section.title && (
-              <div className="px-4 mb-3 text-[10px] font-black text-text-dim/40 uppercase tracking-[3px]">
+              <div className="px-4 mb-2 text-[10px] font-black text-text-dim/40 uppercase tracking-[3px]">
                 {section.title}
               </div>
             )}
@@ -324,8 +343,8 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
               style={{
                 minHeight: '100%',
                 display: 'flex', flexDirection: 'column',
-                alignItems: 'center', justifyContent: 'flex-start',
-                padding: '56px 32px 96px',
+                alignItems: 'center', justifyContent: 'center',
+                padding: '40px 24px 40px',
               }}
               role="navigation"
               aria-label="Menu principale"
@@ -333,9 +352,9 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
               {/* ── Header logo ── */}
               <motion.div
                 variants={itemVariants}
-                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 40 }}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 20 }}
               >
-                <div style={{ position: 'relative', marginBottom: 14 }}>
+                <div style={{ position: 'relative', marginBottom: 10 }}>
                   <div style={{
                     position: 'absolute', inset: -8,
                     background: 'rgba(212,169,64,0.18)', borderRadius: '50%',
@@ -343,18 +362,18 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
                   }} />
                   <img
                     src={logo} alt="LexFlow"
-                    style={{ width: 60, height: 60, objectFit: 'contain', position: 'relative', zIndex: 1 }}
+                    style={{ width: 48, height: 48, objectFit: 'contain', position: 'relative', zIndex: 1 }}
                   />
                 </div>
                 <h2 style={{
-                  fontSize: 30, fontWeight: 900, color: '#fff',
+                  fontSize: 24, fontWeight: 900, color: '#fff',
                   letterSpacing: '-0.04em', lineHeight: 1, margin: 0,
                 }}>
                   LexFlow
                 </h2>
                 <p style={{
-                  fontSize: 10, fontWeight: 700, color: '#d4a940',
-                  textTransform: 'uppercase', letterSpacing: '3px', margin: '5px 0 0',
+                  fontSize: 9, fontWeight: 700, color: '#d4a940',
+                  textTransform: 'uppercase', letterSpacing: '3px', margin: '4px 0 0',
                 }}>
                   Law Suite
                 </p>
@@ -366,7 +385,7 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
                 style={{
                   width: '100%', maxWidth: 280, height: 1,
                   background: 'linear-gradient(90deg, transparent, rgba(212,169,64,0.3), transparent)',
-                  marginBottom: 32,
+                  marginBottom: 16,
                 }}
               />
 
@@ -379,15 +398,15 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
                   <motion.div
                     key={item.path}
                     variants={itemVariants}
-                    style={{ width: '100%', maxWidth: 320, padding: '4px 0' }}
+                    style={{ width: '100%', maxWidth: 320, padding: '2px 0' }}
                   >
                     <NavLink
                       to={item.path}
                       onClick={handleClose}
                       style={{
                         display: 'flex', flexDirection: 'column',
-                        alignItems: 'center', gap: 8,
-                        width: '100%', padding: '14px 0',
+                        alignItems: 'center', gap: 4,
+                        width: '100%', padding: '10px 0',
                         textDecoration: 'none', position: 'relative',
                         color: isActive ? '#d4a940' : '#e2e4ef',
                         fontWeight: isActive ? 700 : 500,
@@ -395,14 +414,14 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
                       }}
                     >
                       <item.icon
-                        size={24}
+                        size={20}
                         style={{
                           transition: 'transform 0.3s ease',
                           transform: isActive ? 'scale(1.15)' : 'scale(1)',
                         }}
                       />
                       <span style={{
-                        fontSize: 17, letterSpacing: '0.02em',
+                        fontSize: 15, letterSpacing: '0.02em',
                         position: 'relative', display: 'inline-block',
                       }}>
                         {item.label}
@@ -428,7 +447,7 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
                 style={{
                   width: '100%', maxWidth: 280, height: 1,
                   background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent)',
-                  margin: '20px 0',
+                  margin: '12px 0',
                 }}
               />
 
@@ -439,16 +458,16 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
                   style={{
                     width: '100%', display: 'flex',
                     alignItems: 'center', justifyContent: 'center',
-                    gap: 10, padding: '15px 24px', borderRadius: 14,
+                    gap: 10, padding: '12px 24px', borderRadius: 14,
                     background: 'rgba(248,113,113,0.1)',
                     border: '1px solid rgba(248,113,113,0.2)',
                     color: '#f87171', cursor: 'pointer',
-                    fontWeight: 700, fontSize: 13,
+                    fontWeight: 700, fontSize: 12,
                     textTransform: 'uppercase', letterSpacing: '0.1em',
                     transition: 'background 0.2s',
                   }}
                 >
-                  <Lock size={18} />
+                  <Lock size={16} />
                   Blocca Vault
                 </button>
               </motion.div>
@@ -457,9 +476,9 @@ function MobileSidebar({ isOpen, onToggle, version, onLock }) {
               <motion.div
                 variants={itemVariants}
                 style={{
-                  marginTop: 32, textAlign: 'center',
+                  marginTop: 16, textAlign: 'center',
                   display: 'flex', flexDirection: 'column',
-                  gap: 8, alignItems: 'center',
+                  gap: 6, alignItems: 'center',
                 }}
               >
                 <div style={{
@@ -503,7 +522,7 @@ export function HamburgerButton({ onClick }) {
       onClick={onClick}
       aria-label="Apri menu"
       style={{
-        position: 'fixed', top: 12, left: 16, zIndex: 90,
+        position: 'fixed', top: 12, right: 16, zIndex: 90,
         background: 'rgba(19,20,30,0.9)',
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
