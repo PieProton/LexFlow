@@ -73,6 +73,7 @@ jobs:
   # 2. BUILD ANDROID (APK/AAB)
   # ==========================================
   build-android:
+    needs: build-desktop
     runs-on: ubuntu-latest
     steps:
       - name: Checkout del codice
@@ -120,6 +121,12 @@ jobs:
         run: npx tauri android init
         env:
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      - name: Configura Gradle per CI
+        run: |
+          echo "org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=512m" >> src-tauri/gen/android/gradle.properties
+          echo "org.gradle.daemon=false" >> src-tauri/gen/android/gradle.properties
+          echo "org.gradle.parallel=false" >> src-tauri/gen/android/gradle.properties
 
       - name: Decodifica Keystore Android
         env:
