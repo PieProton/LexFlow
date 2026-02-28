@@ -8,6 +8,7 @@ import {
 import { exportPracticePDF } from '../utils/pdfGenerator';
 import ExportWarningModal from './ExportWarningModal';
 import toast from 'react-hot-toast';
+import * as api from '../tauri-api';
 
 export default function PracticeDetail({ practice, onBack, onUpdate }) {
   const [activeTab, setActiveTab] = useState('diary'); // diary, docs, deadlines, info
@@ -35,7 +36,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
       setBioAttempted(true);
       (async () => {
         try {
-          const result = await window.api.bioLogin();
+          const result = await api.bioLogin();
           if (result) {
             setBiometricVerified(true);
           }
@@ -48,7 +49,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
 
   const retryBiometric = async () => {
     try {
-      const result = await window.api.bioLogin();
+      const result = await api.bioLogin();
       if (result) {
         setBiometricVerified(true);
       } else {
@@ -65,7 +66,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
     if (!practicePassword) return;
     setPracticePasswordError('');
     try {
-      const result = await window.api.verifyVaultPassword(practicePassword);
+      const result = await api.verifyVaultPassword(practicePassword);
       if (result && result.valid) {
         setPracticePassword('');
         setBiometricVerified(true);
@@ -154,7 +155,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
   };
 
   const linkFolder = async () => {
-    const folder = await window.api.selectFolder();
+    const folder = await api.selectFolder();
     if (folder) {
       update({ folderPath: folder });
       toast.success('Cartella collegata');
@@ -162,7 +163,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
   };
 
   const openFolder = () => {
-    if (practice.folderPath) window.api.openPath(practice.folderPath);
+    if (practice.folderPath) api.openPath(practice.folderPath);
   };
 
   const handleExport = () => {
@@ -177,7 +178,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
     const pwd = prompt("Inserisci la Master Password per esportare il diario:");
     if (!pwd) return;
     try {
-      const result = await window.api.verifyVaultPassword(pwd);
+      const result = await api.verifyVaultPassword(pwd);
       if (!result || !result.valid) {
         toast.error('Password errata — esportazione negata');
         return;
@@ -193,7 +194,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
   // --- Handlers: PDF Upload ---
   const handleUploadPDF = async () => {
     try {
-      const result = await window.api.selectFile();
+      const result = await api.selectFile();
       if (result && result.name && result.path) {
         const attachments = [...(practice.attachments || []), { name: result.name, path: result.path, addedAt: new Date().toISOString() }];
         update({ attachments });
@@ -485,7 +486,7 @@ export default function PracticeDetail({ practice, onBack, onUpdate }) {
                           {att.addedAt ? formatDate(att.addedAt) : ''}
                         </p>
                       </div>
-                      <button onClick={() => att.path && window.api.openPath(att.path)} className="btn-ghost text-xs p-2">
+                      <button onClick={() => att.path && api.openPath(att.path)} className="btn-ghost text-xs p-2">
                         <FolderOpen size={14} />
                       </button>
                       <button onClick={() => removeAttachment(idx)} className="opacity-0 group-hover:opacity-100 p-2 text-text-dim hover:text-red-400 transition-all">

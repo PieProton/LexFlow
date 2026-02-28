@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Clock, Play, Square, Plus, Trash2, Briefcase, ChevronDown, ChevronLeft, ChevronRight, Edit3, Check, X, DollarSign } from 'lucide-react';
 import toast from 'react-hot-toast';
+import * as api from '../tauri-api';
 
 function genId() { return 'tl_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 function fmtDuration(min) {
@@ -33,7 +34,7 @@ export default function TimeTrackingPage({ practices }) {
   useEffect(() => {
     (async () => {
       try {
-        const data = await window.api.loadTimeLogs();
+        const data = await api.loadTimeLogs();
         setLogs(data || []);
       } catch (e) { console.error(e); }
       setLoading(false);
@@ -54,7 +55,7 @@ export default function TimeTrackingPage({ practices }) {
 
   const saveLogs = useCallback(async (newLogs) => {
     setLogs(newLogs);
-    try { await window.api.saveTimeLogs(newLogs); } catch (e) { console.error(e); toast.error('Errore salvataggio'); }
+    try { await api.saveTimeLogs(newLogs); } catch (e) { console.error(e); toast.error('Errore salvataggio'); }
   }, []);
 
   const startTimer = (practiceId, description = '') => {

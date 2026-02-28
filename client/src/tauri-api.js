@@ -1,17 +1,13 @@
-/* LexFlow — Tauri API Bridge (auto-generated) */
-// SECURITY FIX (Gemini Audit): use ES module imports instead of window.__TAURI__ global.
-// withGlobalTauri=false prevents XSS from accessing invoke() via the global namespace.
+/* LexFlow — Tauri API Bridge v3.6.0 (ESM) */
+// SECURITY: Pure ES module — no window.api global.
+// withGlobalTauri=false + CSP script-src 'self' = XSS cannot access invoke().
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import {
-  isPermissionGranted as notifPermGranted,
-  requestPermission as notifReqPerm,
-  sendNotification as notifSend
-} from '@tauri-apps/plugin-notification';
+import { writeFile } from '@tauri-apps/plugin-fs';
+import { isPermissionGranted as notifPermGranted } from '@tauri-apps/plugin-notification';
 
 function safeInvoke(cmd, args = {}) {
   return invoke(cmd, args).catch(err => {
-    // SECURITY FIX: sanitize error output in production — no stack traces or internal details
     if (import.meta.env.PROD) {
       console.warn(`[LexFlow] Command failed: ${cmd}`);
     } else {
@@ -21,160 +17,130 @@ function safeInvoke(cmd, args = {}) {
   });
 }
 
-function toBytes(arrayBuffer) {
-  if (!arrayBuffer) return new Uint8Array(0);
-  // PERF FIX (Gemini L3-3): return Uint8Array directly instead of spreading into Array.
-  // The spread operator [...new Uint8Array(buf)] allocates a full JS Array copy — on files
-  // >10MB this causes OOM on Android (2× memory: one Uint8Array + one Array of numbers).
-  // Tauri v2 accepts Uint8Array natively in command parameters (serialized as Vec<u8>).
-  return new Uint8Array(arrayBuffer);
-}
+// Vault / Auth
+export const vaultExists = () => safeInvoke('vault_exists');
+export const unlockVault = (pwd) => safeInvoke('unlock_vault', { password: pwd });
+export const lockVault = () => safeInvoke('lock_vault');
+export const resetVault = (password) => safeInvoke('reset_vault', { password });
+export const exportVault = (pwd) => safeInvoke('export_vault', { pwd });
+export const importVault = (pwd) => safeInvoke('import_vault', { pwd });
+export const changePassword = (currentPassword, newPassword) =>
+  safeInvoke('change_password', { currentPassword, newPassword });
+export const verifyVaultPassword = (pwd) => safeInvoke('verify_vault_password', { pwd });
 
-window.api = {
-  // Vault / Auth
-  vaultExists: () => safeInvoke('vault_exists'),
-  unlockVault: (pwd) => safeInvoke('unlock_vault', { password: pwd }),
-  lockVault: () => safeInvoke('lock_vault'),
-  resetVault: (password) => safeInvoke('reset_vault', { password }),
-  exportVault: (pwd) => safeInvoke('export_vault', { pwd }),
-  importVault: (pwd) => safeInvoke('import_vault', { pwd }),
-  changePassword: (currentPassword, newPassword) => safeInvoke('change_password', { currentPassword, newPassword }),
-  verifyVaultPassword: (pwd) => safeInvoke('verify_vault_password', { pwd }),
+// Biometrics
+export const checkBio = () => safeInvoke('check_bio');
+export const hasBioSaved = () => safeInvoke('has_bio_saved');
+export const saveBio = (pwd) => safeInvoke('save_bio', { pwd });
+export const clearBio = () => safeInvoke('clear_bio');
+export const bioLogin = async () => {
+  const res = await safeInvoke('bio_login');
+  return (res && res.success) ? { success: true } : null;
+};
+export const loginBio = bioLogin;
 
-  // Biometrics
-  checkBio: () => safeInvoke('check_bio'),
-  hasBioSaved: () => safeInvoke('has_bio_saved'),
-  saveBio: (pwd) => safeInvoke('save_bio', { pwd }),
-  // SECURITY FIX (Gemini Audit): bio_login returns {success: true} — password never reaches JS.
-  // Legacy password paths removed to prevent accidental password leakage to frontend.
-  bioLogin: () => safeInvoke('bio_login').then((res) => {
-    if (!res) return null;
-    if (typeof res === 'object' && res.success) return { success: true };
-    return null;
-  }),
-  // legacy alias used in some components
-  loginBio: () => safeInvoke('bio_login').then((res) => {
-    if (!res) return null;
-    if (typeof res === 'object' && res.success) return { success: true };
-    return null;
-  }),
-  clearBio: () => safeInvoke('clear_bio'),
+// Data
+export const loadPractices = () => safeInvoke('load_practices');
+export const savePractices = (list) => safeInvoke('save_practices', { list });
+export const loadAgenda = () => safeInvoke('load_agenda');
+export const saveAgenda = (agenda) => safeInvoke('save_agenda', { agenda });
+export const getSummary = () => safeInvoke('get_summary');
 
-  // Data
-  loadPractices: () => safeInvoke('load_practices'),
-  savePractices: (list) => safeInvoke('save_practices', { list }),
-  loadAgenda: () => safeInvoke('load_agenda'),
-  saveAgenda: (agenda) => safeInvoke('save_agenda', { agenda }),
-  // PERF FIX (Gemini L2-4): server-side summary computation — no more full client-side iteration
-  getSummary: () => safeInvoke('get_summary'),
+// Conflict Check
+export const checkConflict = (name) => safeInvoke('check_conflict', { name });
 
-  // Conflict Check (v3.2.0)
-  checkConflict: (name) => safeInvoke('check_conflict', { name }),
+// Time Tracking
+export const loadTimeLogs = () => safeInvoke('load_time_logs');
+export const saveTimeLogs = (logs) => safeInvoke('save_time_logs', { logs });
 
-  // Time Tracking (v3.3.0)
-  loadTimeLogs: () => safeInvoke('load_time_logs'),
-  saveTimeLogs: (logs) => safeInvoke('save_time_logs', { logs }),
+// Invoices / Billing
+export const loadInvoices = () => safeInvoke('load_invoices');
+export const saveInvoices = (invoices) => safeInvoke('save_invoices', { invoices });
 
-  // Invoices / Billing (v3.4.0)
-  loadInvoices: () => safeInvoke('load_invoices'),
-  saveInvoices: (invoices) => safeInvoke('save_invoices', { invoices }),
+// Contacts Registry
+export const loadContacts = () => safeInvoke('load_contacts');
+export const saveContacts = (contacts) => safeInvoke('save_contacts', { contacts });
 
-  // Contacts Registry (v3.5.0)
-  loadContacts: () => safeInvoke('load_contacts'),
-  saveContacts: (contacts) => safeInvoke('save_contacts', { contacts }),
+// Settings
+export const getSettings = () => safeInvoke('get_settings');
+export const saveSettings = (settings) => safeInvoke('save_settings', { settings });
 
-  // Settings
-  getSettings: () => safeInvoke('get_settings'),
-  saveSettings: (settings) => safeInvoke('save_settings', { settings }),
+// Files
+export const selectFile = async () => (await safeInvoke('select_file')) || null;
+export const selectFolder = async () => (await safeInvoke('select_folder')) || null;
+export const openPath = (path) => safeInvoke('open_path', { path });
 
-  // Files
-  // select_file returns { name, path } or null — normalize to object or null
-  selectFile: () => safeInvoke('select_file').then(res => res || null),
-  // select_folder returns a folder path string or null
-  selectFolder: () => safeInvoke('select_folder').then(res => res || null),
-  openPath: (path) => safeInvoke('open_path', { path }),
-  exportPDF: (arrayBuffer, defaultName) => safeInvoke('export_pdf', { data: toBytes(arrayBuffer), defaultName }),
-
-  // Notifications
-  sendNotification: ({ title, body }) => safeInvoke('send_notification', { title, body }),
-  syncNotificationSchedule: (schedule) => safeInvoke('sync_notification_schedule', { schedule }),
-
-  // Licensing
-  checkLicense: () => safeInvoke('check_license'),
-  activateLicense: (key, clientName) => safeInvoke('activate_license', { key, clientName: clientName || null }),
-
-  // Platform / App
-  isMac: () => safeInvoke('is_mac'),
-  getAppVersion: () => safeInvoke('get_app_version'),
-  getPlatform: () => safeInvoke('get_platform'),
-
-  // Window controls
-  windowMinimize: () => safeInvoke('window_minimize'),
-  windowMaximize: () => safeInvoke('window_maximize'),
-  windowClose: () => safeInvoke('window_close'),
-
-  // Security & Content Protection
-  setContentProtection: (enabled) => safeInvoke('set_content_protection', { enabled }),
-  pingActivity: () => safeInvoke('ping_activity'),
-  setAutolockMinutes: (minutes) => safeInvoke('set_autolock_minutes', { minutes }),
-  getAutolockMinutes: () => safeInvoke('get_autolock_minutes'),
-
-  // Listeners — return an unsubscribe function (Promise-based: no race condition)
-  onBlur: (cb) => {
-    const unlistenPromise = listen('lf-blur', event => {
-      cb(event.payload === true || event.payload === undefined);
-    }).catch(() => null);
-    return () => { unlistenPromise.then(fn => fn && fn()); };
-  },
-  onLock: (cb) => {
-    const unlistenPromise = listen('lf-lock', () => cb()).catch(() => null);
-    return () => { unlistenPromise.then(fn => fn && fn()); };
-  },
-  onVaultLocked: (cb) => {
-    const unlistenPromise = listen('lf-vault-locked', () => cb()).catch(() => null);
-    return () => { unlistenPromise.then(fn => fn && fn()); };
-  },
-  // RACE FIX (L7 #5): warning event fires 30s before autolock so the frontend
-  // can auto-save any open form and show a "Sessione in scadenza" notice.
-  onVaultWarning: (cb) => {
-    const unlistenPromise = listen('lf-vault-warning', () => cb()).catch(() => null);
-    return () => { unlistenPromise.then(fn => fn && fn()); };
-  },
+// PDF export — bypasses JSON serialization via fs plugin direct write
+export const exportPDF = async (arrayBuffer, defaultName) => {
+  const savePath = await safeInvoke('select_pdf_save_path', { defaultName });
+  if (savePath) {
+    await writeFile(savePath, new Uint8Array(arrayBuffer));
+    return { success: true, path: savePath };
+  }
+  return { success: false, cancelled: true };
 };
 
-// Freeze API object — previene manomissione via XSS (window.api.lockVault = malicious_fn)
-Object.freeze(window.api);
+// Notifications
+export const sendNotification = ({ title, body }) =>
+  safeInvoke('send_notification', { title, body });
+export const syncNotificationSchedule = (schedule) =>
+  safeInvoke('sync_notification_schedule', { schedule });
 
-// Global listener for Rust-initiated notifications.
-// The Rust backend already sends native OS notifications via notification plugin,
-// so we do NOT send another native notification here (that would cause duplicates).
-// This listener is for in-app display only (e.g. toast, badge update, etc.)
-// when the app is in the foreground.
-if (listen) {
-  listen('show-notification', async (event) => {
+// Licensing
+export const checkLicense = () => safeInvoke('check_license');
+export const activateLicense = (key, clientName) =>
+  safeInvoke('activate_license', { key, clientName: clientName || null });
+
+// Platform / App
+export const isMac = () => safeInvoke('is_mac');
+export const getAppVersion = () => safeInvoke('get_app_version');
+export const getPlatform = () => safeInvoke('get_platform');
+
+// Window controls
+export const windowMinimize = () => safeInvoke('window_minimize');
+export const windowMaximize = () => safeInvoke('window_maximize');
+export const windowClose = () => safeInvoke('window_close');
+
+// Security & Content Protection
+export const setContentProtection = (enabled) =>
+  safeInvoke('set_content_protection', { enabled });
+export const pingActivity = () => safeInvoke('ping_activity');
+export const setAutolockMinutes = (minutes) =>
+  safeInvoke('set_autolock_minutes', { minutes });
+export const getAutolockMinutes = () => safeInvoke('get_autolock_minutes');
+
+// Listeners (return unsubscribe fn)
+export const onBlur = (cb) => {
+  const p = listen('lf-blur', e => cb(e.payload === true || e.payload === undefined)).catch(() => null);
+  return () => p.then(fn => fn && fn());
+};
+export const onLock = (cb) => {
+  const p = listen('lf-lock', () => cb()).catch(() => null);
+  return () => p.then(fn => fn && fn());
+};
+export const onVaultLocked = (cb) => {
+  const p = listen('lf-vault-locked', () => cb()).catch(() => null);
+  return () => p.then(fn => fn && fn());
+};
+export const onVaultWarning = (cb) => {
+  const p = listen('lf-vault-warning', () => cb()).catch(() => null);
+  return () => p.then(fn => fn && fn());
+};
+
+// Notification fallback listener (dev mode only)
+listen('show-notification', async (event) => {
+  try {
     try {
-      // In-app: the backend native notification is already shown via Tauri plugin.
-      // We only need fallback for web-only dev mode.
-      try {
-        const granted = await notifPermGranted();
-        if (granted) {
-          // Tauri native plugin is available — backend already sent the notification.
-          return;
-        }
-      } catch (_) {
-        // Plugin not available (web-only dev mode) — fall through to browser API
+      const granted = await notifPermGranted();
+      if (granted) return;
+    } catch (_) { /* not in Tauri runtime */ }
+    if (window.Notification) {
+      if (Notification.permission === 'granted') {
+        new Notification(event.payload.title, { body: event.payload.body });
+      } else if (Notification.permission !== 'denied') {
+        const p = await Notification.requestPermission();
+        if (p === 'granted') new Notification(event.payload.title, { body: event.payload.body });
       }
-      // Fallback for web-only mode (dev server without Tauri runtime)
-      if (window.Notification) {
-        if (Notification.permission === 'granted') {
-          new Notification(event.payload.title, { body: event.payload.body });
-        } else if (Notification.permission !== 'denied') {
-          const p = await Notification.requestPermission();
-          if (p === 'granted') new Notification(event.payload.title, { body: event.payload.body });
-        }
-      }
-    } catch (e) {
-      console.warn('Notification error:', e);
     }
-  }).catch(() => {});
-}
+  } catch (e) { console.warn('Notification error:', e); }
+}).catch(() => {});

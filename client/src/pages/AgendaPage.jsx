@@ -17,6 +17,7 @@ import {
   Check
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import * as api from '../tauri-api';
 
 const DAYS_IT = ['Domenica','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato'];
 const DAYS_SHORT = ['DOM','LUN','MAR','MER','GIO','VEN','SAB'];
@@ -1103,7 +1104,7 @@ function NotificationSettingsPopup({ settings, agendaEvents, onSave, onClose }) 
       briefingSera,
     };
     try {
-      await window.api.saveSettings(updated);
+      await api.saveSettings(updated);
       // Sync backend scheduler con formato corretto: briefingTimes (array) + items
       const briefingTimes = [briefingMattina, briefingPomeriggio, briefingSera].filter(Boolean);
       const items = (agendaEvents || [])
@@ -1116,7 +1117,7 @@ function NotificationSettingsPopup({ settings, agendaEvents, onSave, onClose }) 
           remindMinutes: e.remindMinutes ?? (preavviso || 30),
           customRemindTime: e.customRemindTime || null,
         }));
-      await window.api.syncNotificationSchedule({ briefingTimes, items });
+      await api.syncNotificationSchedule({ briefingTimes, items });
       onSave(updated);
       onClose();
     } catch (e) {

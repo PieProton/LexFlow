@@ -3,6 +3,7 @@ import { Receipt, Plus, Trash2, FileText, Download, Edit3, Check, X, ChevronRigh
 import toast from 'react-hot-toast';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import * as api from '../tauri-api';
 
 function genId() { return 'inv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
@@ -37,8 +38,8 @@ export default function BillingPage({ practices }) {
     (async () => {
       try {
         const [inv, tl] = await Promise.all([
-          window.api.loadInvoices(),
-          window.api.loadTimeLogs(),
+          api.loadInvoices(),
+          api.loadTimeLogs(),
         ]);
         setInvoices(inv || []);
         setTimeLogs(tl || []);
@@ -49,7 +50,7 @@ export default function BillingPage({ practices }) {
 
   const saveInvoices = useCallback(async (newInvoices) => {
     setInvoices(newInvoices);
-    try { await window.api.saveInvoices(newInvoices); } catch (e) { console.error(e); toast.error('Errore salvataggio'); }
+    try { await api.saveInvoices(newInvoices); } catch (e) { console.error(e); toast.error('Errore salvataggio'); }
   }, []);
 
   const deleteInvoice = async (id) => {
@@ -163,7 +164,7 @@ export default function BillingPage({ practices }) {
     const pdfArrayBuffer = doc.output('arraybuffer');
     const defaultName = `Nota_ProForma_${invoice.number.replace(/\//g, '-')}.pdf`;
     try {
-      await window.api.exportPDF(pdfArrayBuffer, defaultName);
+      await api.exportPDF(pdfArrayBuffer, defaultName);
       toast.success('PDF esportato');
     } catch (e) {
       // Fallback: download in browser

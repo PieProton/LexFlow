@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import * as api from '../tauri-api';
 
 const TYPE_LABELS = { civile: 'Civile', penale: 'Penale', amm: 'Amministrativo', stra: 'Stragiudiziale' };
 const FIELD_LABELS = {
@@ -181,7 +182,7 @@ export async function exportPracticePDF(practice) {
     // 4. Chiama il Backend Sicuro
     // Non chiediamo il path qui. Il Main Process aprirà il dialogo di salvataggio
     // e scriverà il file solo se l'utente conferma.
-    const result = await window.api.exportPDF(pdfArrayBuffer, defaultName);
+    const result = await api.exportPDF(pdfArrayBuffer, defaultName);
 
     return result.success;
   } catch (error) {

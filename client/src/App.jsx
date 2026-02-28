@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { Lock, CheckCircle2, AlertCircle, Loader2, Info } from 'lucide-react';
+import * as api from './tauri-api';
 
 // Componenti
 import LoginScreen from './components/LoginScreen';
@@ -60,24 +61,22 @@ export default function App() {
 
   // --- 1. INIZIALIZZAZIONE ---
   useEffect(() => {
-    if (!window.api) return;
-
     // Carichiamo informazioni non-legate alla licenza (version, settings)
 
-  window.api.getAppVersion?.().then(v => setVersion(v || '')).catch(() => {});
+  api.getAppVersion?.().then(v => setVersion(v || '')).catch(() => {});
 
   // Carichiamo le impostazioni (incluso il tempo di notifica)
-  window.api.getSettings?.().then(s => {
+  api.getSettings?.().then(s => {
       if (s) {
         setSettings(s);
         if (typeof s.privacyBlurEnabled === 'boolean') setPrivacyEnabled(s.privacyBlurEnabled);
         if (typeof s.screenshotProtection === 'boolean') {
           setScreenshotProtection(s.screenshotProtection);
-          window.api.setContentProtection?.(s.screenshotProtection);
+          api.setContentProtection?.(s.screenshotProtection);
         }
         if (s.autolockMinutes !== undefined) {
           setAutolockMinutes(s.autolockMinutes);
-          window.api.setAutolockMinutes?.(s.autolockMinutes);
+          api.setAutolockMinutes?.(s.autolockMinutes);
         }
       }
     }).catch(() => {});
@@ -85,9 +84,9 @@ export default function App() {
 
   // --- 1b. ACTIVITY TRACKER (Anti-Inattività) ---
   useEffect(() => {
-    if (isLocked || !window.api) return;
+    if (isLocked) return;
 
-    const pingBackend = () => window.api.pingActivity?.();
+    const pingBackend = () => api.pingActivity?.();
     
     // Solo eventi intenzionali — mousemove e scroll generano troppi eventi
     // e thrashano il main thread (specialmente su Android). mousedown/keydown/touchstart
@@ -133,14 +132,12 @@ export default function App() {
   }, [navigate]);
 
   useEffect(() => {
-    if (!window.api) return;
-
-    const removeBlurListener = window.api.onBlur?.((val) => {
+    const removeBlurListener = api.onBlur?.((val) => {
       if (privacyEnabled) setBlurred(val);
     });
 
-    const removeLockListener = window.api.onLock?.(() => handleLockLocal(true));        // autolock backend
-    const removeVaultLockedListener = window.api.onVaultLocked?.(() => handleLockLocal(true)); // autolock backend
+    const removeLockListener = api.onLock?.(() => handleLockLocal(true));        // autolock backend
+    const removeVaultLockedListener = api.onVaultLocked?.(() => handleLockLocal(true)); // autolock backend
 
     return () => {
       if (typeof removeBlurListener === 'function') removeBlurListener();
@@ -150,7 +147,7 @@ export default function App() {
   }, [privacyEnabled, handleLockLocal]);
 
   const handleManualLock = async () => {
-    if (window.api?.lockVault) await window.api.lockVault();
+    if (api.lockVault) await api.lockVault();
     handleLockLocal(false); // lock manuale: bio auto-trigger abilitato
   };
 
@@ -194,14 +191,13 @@ export default function App() {
   }, []);
 
   const loadAllData = useCallback(async () => {
-    if (!window.api) return;
     try {
-      const pracs = (await window.api.loadPractices().catch(() => []) || []).map(p => ({
+      const pracs = (await api.loadPractices().catch(() => []) || []).map(p => ({
         ...p,
         biometricProtected: p.biometricProtected !== false, // default true per tutti
       }));
-      const agenda = await window.api.loadAgenda().catch(() => []) || [];
-      const currentSettings = await window.api.getSettings().catch(() => ({}));
+      const agenda = await api.loadAgenda().catch(() => []) || [];
+      const currentSettings = await api.getSettings().catch(() => ({}));
       
       setPractices(pracs);
       setSettings(currentSettings);
@@ -209,11 +205,11 @@ export default function App() {
       setAgendaEvents(synced);
       agendaRef.current = synced;
       
-      await window.api.saveAgenda(synced);
+      await api.saveAgenda(synced);
 
       // Sync schedule al backend subito dopo il load — così lo scheduler Rust
       // ha dati freschi immediatamente (events + deadlines + briefing times)
-      if (window.api?.syncNotificationSchedule) {
+      if (api.syncNotificationSchedule) {
         const agendaItems = synced
           .filter(e => !e.completed && e.timeStart)
           .map(e => ({
@@ -238,7 +234,7 @@ export default function App() {
           currentSettings?.briefingPomeriggio || '14:30',
           currentSettings?.briefingSera || '19:30',
         ];
-        await window.api.syncNotificationSchedule({ briefingTimes, items: [...agendaItems, ...deadlineItems] });
+        await api.syncNotificationSchedule({ briefingTimes, items: [...agendaItems, ...deadlineItems] });
       }
     } catch (e) { 
       console.error("Errore caricamento dati:", e); 
@@ -277,12 +273,12 @@ export default function App() {
 
   const savePractices = async (newList) => {
     setPractices(newList);
-    if (window.api?.savePractices) {
-      await window.api.savePractices(newList);
+    if (api.savePractices) {
+      await api.savePractices(newList);
       const synced = syncDeadlinesToAgenda(newList, agendaRef.current);
       setAgendaEvents(synced);
       agendaRef.current = synced;
-      await window.api.saveAgenda(synced);
+      await api.saveAgenda(synced);
       // Sync schedule col backend (include scadenze fascicoli aggiornate)
       syncScheduleToBackend(synced, newList);
     }
@@ -291,14 +287,14 @@ export default function App() {
   const saveAgenda = async (newEvents) => {
     setAgendaEvents(newEvents);
     agendaRef.current = newEvents;
-    if (window.api?.saveAgenda) await window.api.saveAgenda(newEvents);
+    if (api.saveAgenda) await api.saveAgenda(newEvents);
     // Sync notification schedule with updated items for backend scheduler
     syncScheduleToBackend(newEvents, practices);
   };
 
   // Centralizza il sync dello schedule verso il backend Rust scheduler
   const syncScheduleToBackend = async (events, pList) => {
-    if (!window.api?.syncNotificationSchedule) return;
+    if (!api.syncNotificationSchedule) return;
     // A. Eventi agenda
     const agendaItems = (events || [])
       .filter(e => !e.completed && e.timeStart)
@@ -332,7 +328,7 @@ export default function App() {
       settings?.briefingPomeriggio || '14:30',
       settings?.briefingSera || '19:30',
     ];
-    await window.api.syncNotificationSchedule({ briefingTimes, items });
+    await api.syncNotificationSchedule({ briefingTimes, items });
   };
 
   const handleSelectPractice = (id) => {

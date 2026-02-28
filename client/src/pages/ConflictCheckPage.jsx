@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { Search, AlertTriangle, Shield, ShieldCheck, User, Briefcase, Scale, ChevronRight, X } from 'lucide-react';
+import * as api from '../tauri-api';
 
 const ROLE_LABELS = {
   client: 'Cliente',
@@ -40,7 +41,7 @@ export default function ConflictCheckPage({ onSelectPractice }) {
     }
     setLoading(true);
     try {
-      const res = await window.api.checkConflict(q);
+      const res = await api.checkConflict(q);
       setResults(res);
       setSearched(true);
     } catch (e) {

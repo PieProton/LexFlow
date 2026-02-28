@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CalendarClock, ChevronRight, AlertTriangle, Clock, Check, Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
+import * as api from '../tauri-api';
 
 const TYPE_LABELS = { civile: 'Civile', penale: 'Penale', amm: 'Amministrativo', stra: 'Stragiudiziale', agenda: 'Agenda' };
 
@@ -23,7 +24,7 @@ export default function DeadlinesPage({ practices, onSelectPractice, settings, a
   const handleBriefingSave = async () => {
     try {
       const updated = { ...settings, briefingMattina, briefingPomeriggio, briefingSera };
-      await window.api.saveSettings(updated);
+      await api.saveSettings(updated);
       // Sync backend scheduler con formato corretto: briefingTimes (array) + items preservati
       const briefingTimes = [briefingMattina, briefingPomeriggio, briefingSera].filter(Boolean);
       const items = (agendaEvents || [])
@@ -36,7 +37,7 @@ export default function DeadlinesPage({ practices, onSelectPractice, settings, a
           remindMinutes: e.remindMinutes ?? (settings?.preavviso || 30),
           customRemindTime: e.customRemindTime || null,
         }));
-      await window.api.syncNotificationSchedule({ briefingTimes, items });
+      await api.syncNotificationSchedule({ briefingTimes, items });
       setBriefingDirty(false);
       toast.success('Orari briefing aggiornati');
     } catch (e) {

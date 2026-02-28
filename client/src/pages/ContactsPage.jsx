@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Users, Plus, Search, User, Scale, Briefcase, Building, Gavel, UserCheck, Edit3, Trash2, X, Check, Phone, Mail, MapPin, Hash, ChevronRight, Filter } from 'lucide-react';
 import toast from 'react-hot-toast';
+import * as api from '../tauri-api';
 
 function genId() { return 'ct_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
@@ -27,7 +28,7 @@ export default function ContactsPage({ practices, onSelectPractice }) {
   useEffect(() => {
     (async () => {
       try {
-        const data = await window.api.loadContacts();
+        const data = await api.loadContacts();
         setContacts(data || []);
       } catch (e) { console.error(e); }
       setLoading(false);
@@ -36,7 +37,7 @@ export default function ContactsPage({ practices, onSelectPractice }) {
 
   const saveContacts = useCallback(async (newContacts) => {
     setContacts(newContacts);
-    try { await window.api.saveContacts(newContacts); } catch (e) { console.error(e); toast.error('Errore salvataggio'); }
+    try { await api.saveContacts(newContacts); } catch (e) { console.error(e); toast.error('Errore salvataggio'); }
   }, []);
 
   const deleteContact = async (id) => {

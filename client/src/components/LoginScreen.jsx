@@ -11,6 +11,7 @@ import {
   Timer
 } from 'lucide-react';
 import logoSrc from '../assets/logo.png';
+import * as api from '../tauri-api';
 
 export default function LoginScreen({ onUnlock, autoLocked = false }) {
   const [password, setPassword] = useState('');
@@ -56,10 +57,10 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
     let unlocked = false;
 
     try {
-      if (!window.api) throw new Error("API non disponibile");
+      if (!api) throw new Error("API non disponibile");
 
       // 1. Recupera la password dal secure storage (Keychain/Keystore)
-      const bioResult = await window.api.loginBio();
+      const bioResult = await api.loginBio();
 
       // Possibili ritorni normalizzati:
       // - string: la password (legacy)
@@ -80,7 +81,7 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
       // Altrimenti bioResult è la password in chiaro (string)
       const savedPassword = String(bioResult);
       // 2. Usa la password recuperata per sbloccare il vault
-      const result = await window.api.unlockVault(savedPassword);
+      const result = await api.unlockVault(savedPassword);
       if (result.success) {
         // Pulizia e callback di successo: non mostrare più il form
         setPassword('');
@@ -124,18 +125,10 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
   handleBioLoginRef.current = handleBioLogin;
 
   useEffect(() => {
-    // Controllo sicurezza: se l'API non è esposta, mostra errore o fallback
-    if (!window.api) {
-      console.error("API Electron non trovata");
-      setIsNew(false);
-      setShowPasswordField(true);
-      return;
-    }
-
     const init = async () => {
       try {
         // 1. Controlla esistenza Vault
-        const exists = await window.api.vaultExists();
+        const exists = await api.vaultExists();
         setIsNew(!exists);
 
         if (!exists) {
@@ -145,11 +138,11 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
 
         // 2. Controlla disponibilità Biometria
         try {
-          const available = await window.api.checkBio();
+          const available = await api.checkBio();
           setBioAvailable(available);
 
           if (available) {
-            const saved = await window.api.hasBioSaved();
+            const saved = await api.hasBioSaved();
             setBioSaved(saved);
 
             // Auto-trigger biometria SOLO all'avvio manuale (non dopo autolock).
@@ -291,16 +284,15 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
     setLoadingText(isNew ? 'Creazione database sicuro...' : 'Verifica crittografica...');
 
     try {
-      if (!window.api) throw new Error("API non disponibile");
       const providedPwd = password; // keep local copy for potential saveBio before clearing state
-      const result = await window.api.unlockVault(providedPwd);
+      const result = await api.unlockVault(providedPwd);
 
       if (result.success) {
         // If this is a new vault and user wants biometrics, save with the original provided password
         if (result.isNew && bioAvailable && !bioSaved) {
           const consent = window.confirm("Vuoi abilitare l'accesso biometrico (Face ID / Touch ID / impronta) per accedere più velocemente?");
           if (consent) {
-            try { await window.api.saveBio(providedPwd); } catch (e) { console.error(e); }
+            try { await api.saveBio(providedPwd); } catch (e) { console.error(e); }
           }
         }
 
@@ -541,7 +533,7 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
                 autoFocus
                 onKeyDown={async (e) => {
                   if (e.key === 'Enter' && resetPassword) {
-                    const result = await window.api.resetVault(resetPassword);
+                    const result = await api.resetVault(resetPassword);
                     if (result?.success) {
                       setShowResetModal(false);
                       setIsNew(true); setPassword(''); setConfirm(''); setError(''); setBioSaved(false);
@@ -567,7 +559,7 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
               <button
                 onClick={async () => {
                   if (!resetPassword) { setResetError('Password richiesta.'); return; }
-                  const result = await window.api.resetVault(resetPassword);
+                  const result = await api.resetVault(resetPassword);
                   if (result?.success) {
                     setShowResetModal(false);
                     setIsNew(true); setPassword(''); setConfirm(''); setError(''); setBioSaved(false);

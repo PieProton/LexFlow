@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import LicenseSettings from '../components/LicenseSettings';
+import * as api from '../tauri-api';
 
 const PREAVVISO_OPTIONS = [
   { value: 0, label: 'Al momento' },
@@ -73,27 +74,24 @@ export default function SettingsPage({ onLock }) {
   const [importError, setImportError] = useState('');
 
   useEffect(() => {
-    if (window.api) {
-      window.api.getAppVersion().then(setAppVersion);
-      window.api.isMac().then(isMac => setPlatform(isMac ? 'macOS' : 'Windows'));
-      
-      window.api.getSettings().then(settings => {
-        if (settings) {
-          if (typeof settings.privacyBlurEnabled === 'boolean') setPrivacyEnabled(settings.privacyBlurEnabled);
-          if (typeof settings.notifyEnabled === 'boolean') setNotifyEnabled(settings.notifyEnabled);
-          if (settings.notificationTime) setNotificationTime(settings.notificationTime);
-          if (typeof settings.screenshotProtection === 'boolean') setScreenshotProtection(settings.screenshotProtection);
-          if (settings.autolockMinutes !== undefined) setAutolockMinutes(settings.autolockMinutes);
-        }
-      });
-    }
+    api.getAppVersion().then(setAppVersion);
+    api.isMac().then(isMac => setPlatform(isMac ? 'macOS' : 'Windows'));
+    api.getSettings().then(settings => {
+      if (settings) {
+        if (typeof settings.privacyBlurEnabled === 'boolean') setPrivacyEnabled(settings.privacyBlurEnabled);
+        if (typeof settings.notifyEnabled === 'boolean') setNotifyEnabled(settings.notifyEnabled);
+        if (settings.notificationTime) setNotificationTime(settings.notificationTime);
+        if (typeof settings.screenshotProtection === 'boolean') setScreenshotProtection(settings.screenshotProtection);
+        if (settings.autolockMinutes !== undefined) setAutolockMinutes(settings.autolockMinutes);
+      }
+    });
   }, []);
 
   const handlePrivacyToggle = async () => {
     const newValue = !privacyEnabled;
     setPrivacyEnabled(newValue);
     try {
-      await window.api.saveSettings({ privacyBlurEnabled: newValue });
+      await api.saveSettings({ privacyBlurEnabled: newValue });
       toast.success(newValue ? 'Privacy Blur Attivato' : 'Privacy Blur Disattivato');
     } catch (error) {
       toast.error('Errore salvataggio');
@@ -104,7 +102,7 @@ export default function SettingsPage({ onLock }) {
   // Funzione per salvare le impostazioni delle notifiche
   const saveNotifySettings = async (updates) => {
     try {
-      await window.api.saveSettings(updates);
+      await api.saveSettings(updates);
       toast.success("Preferenze notifiche aggiornate");
     } catch (e) {
       toast.error("Errore nel salvataggio");
@@ -116,12 +114,12 @@ export default function SettingsPage({ onLock }) {
     if (!exportPwd) { setExportError('Inserisci una password per il backup.'); return; }
     if (exportPwd.length < 4) { setExportError('Password troppo corta (min. 4 caratteri).'); return; }
     if (exportPwd !== exportPwdConfirm) { setExportError('Le password non corrispondono.'); return; }
-    if (!window.api?.exportVault) { toast.error('Servizio backup non disponibile'); return; }
+    if (!api.exportVault) { toast.error('Servizio backup non disponibile'); return; }
 
     setLoading(true);
     const toastId = toast.loading('Generazione backup…');
     try {
-      const result = await window.api.exportVault(exportPwd);
+      const result = await api.exportVault(exportPwd);
       if (result?.success) {
         toast.success('Backup esportato con successo!', { id: toastId });
         setShowExportModal(false);
@@ -141,12 +139,12 @@ export default function SettingsPage({ onLock }) {
   const handleImportBackup = async () => {
     setImportError('');
     if (!importPwd) { setImportError('Inserisci la password del backup.'); return; }
-    if (!window.api?.importVault) { toast.error('Servizio importazione non disponibile'); return; }
+    if (!api.importVault) { toast.error('Servizio importazione non disponibile'); return; }
 
     setLoading(true);
     const toastId = toast.loading('Importazione in corso…');
     try {
-      const result = await window.api.importVault(importPwd);
+      const result = await api.importVault(importPwd);
       if (result?.success) {
         toast.success('Vault importato! Ricarico…', { id: toastId });
         setShowImportModal(false);
@@ -275,8 +273,8 @@ export default function SettingsPage({ onLock }) {
                 const val = !screenshotProtection;
                 setScreenshotProtection(val);
                 try {
-                  await window.api.setContentProtection(val);
-                  await window.api.saveSettings({ screenshotProtection: val });
+                  await api.setContentProtection(val);
+                  await api.saveSettings({ screenshotProtection: val });
                   toast.success(val ? 'Blocco Screenshot Attivato' : 'Blocco Screenshot Disattivato');
                 } catch (e) {
                   toast.error('Errore');
@@ -306,8 +304,8 @@ export default function SettingsPage({ onLock }) {
                   onClick={async () => {
                     setAutolockMinutes(opt.value);
                     try {
-                      await window.api.setAutolockMinutes(opt.value);
-                      await window.api.saveSettings({ autolockMinutes: opt.value });
+                      await api.setAutolockMinutes(opt.value);
+                      await api.saveSettings({ autolockMinutes: opt.value });
                       toast.success(opt.value === 0 ? 'Blocco automatico disabilitato' : `Blocco dopo ${opt.label} di inattività`);
                     } catch (e) {
                       toast.error('Errore');
@@ -336,7 +334,7 @@ export default function SettingsPage({ onLock }) {
             <button 
               onClick={() => {
                 if(window.confirm("Cancellare le credenziali biometriche salvate?")) {
-                  window.api.clearBio().then(() => toast.success("Biometria resettata"));
+                  api.clearBio().then(() => toast.success("Biometria resettata"));
                 }
               }}
               className="flex items-center justify-center gap-3 p-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-text transition-all group"
@@ -459,7 +457,7 @@ export default function SettingsPage({ onLock }) {
                 autoFocus
                 onKeyDown={async (e) => {
                   if (e.key === 'Enter' && factoryResetPwd) {
-                    const res = await window.api.resetVault(factoryResetPwd);
+                    const res = await api.resetVault(factoryResetPwd);
                     if (res?.success) { setShowFactoryReset(false); window.location.reload(); }
                     else { setFactoryResetError(res?.error || 'Password errata.'); }
                   }
@@ -479,7 +477,7 @@ export default function SettingsPage({ onLock }) {
               <button
                 onClick={async () => {
                   if (!factoryResetPwd) { setFactoryResetError('Password richiesta.'); return; }
-                  const res = await window.api.resetVault(factoryResetPwd);
+                  const res = await api.resetVault(factoryResetPwd);
                   if (res?.success) { setShowFactoryReset(false); window.location.reload(); }
                   else { setFactoryResetError(res?.error || 'Password errata.'); }
                 }}

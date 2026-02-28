@@ -2009,12 +2009,10 @@ async fn import_vault(state: State<'_, AppState>, pwd: String, app: AppHandle) -
 // ═══════════════════════════════════════════════════════════
 
 #[tauri::command]
-fn open_path(path: String) {
+fn open_path(app: AppHandle, path: String) {
     #[cfg(not(target_os = "android"))]
     {
         // SECURITY FIX (Gemini Audit v2): sanitize path to prevent RCE.
-        // open::that() bypasses Tauri's shell scope — an attacker could pass a URL
-        // like "smb://evil/share" (steals NTLM hash) or "/usr/bin/malicious".
         // Only allow opening paths that exist as files/directories on the local filesystem.
         let p = std::path::Path::new(&path);
         if !p.exists() || !p.is_absolute() {
@@ -2030,10 +2028,13 @@ fn open_path(path: String) {
             eprintln!("[LexFlow] SECURITY: open_path refused potentially dangerous path: {:?}", path);
             return;
         }
-        let _ = open::that(&path);
+        use tauri_plugin_shell::ShellExt;
+        if let Err(e) = app.shell().open(&path, None) {
+            eprintln!("[LexFlow] Failed to open path: {:?}", e);
+        }
     }
     #[cfg(target_os = "android")]
-    { let _ = path; }
+    { let _ = (app, path); }
 }
 
 #[tauri::command]
@@ -2105,7 +2106,7 @@ fn get_platform() -> String {
 }
 
 #[tauri::command]
-async fn export_pdf(app: AppHandle, data: Vec<u8>, default_name: String) -> Result<Value, String> {
+async fn select_pdf_save_path(app: AppHandle, default_name: String) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
@@ -2119,10 +2120,9 @@ async fn export_pdf(app: AppHandle, data: Vec<u8>, default_name: String) -> Resu
     match file_path {
         Some(fp) => {
             let path = fp.into_path().map_err(|e| format!("Path error: {:?}", e))?;
-            fs::write(&path, &data).map_err(|e| e.to_string())?;
-            Ok(json!({"success": true, "path": path.to_string_lossy()}))
+            Ok(Some(path.to_string_lossy().into_owned()))
         },
-        None => Ok(json!({"success": false, "cancelled": true})),
+        None => Ok(None),
     }
 }
 
@@ -3032,7 +3032,7 @@ pub fn run() {
             select_file,
             select_folder,
             open_path,
-            export_pdf,
+            select_pdf_save_path,
             // Notifications
             send_notification,
             sync_notification_schedule,
