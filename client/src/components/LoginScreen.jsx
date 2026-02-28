@@ -38,7 +38,90 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
   
   const bioTriggered = useRef(false);
   const bioAutoTriggeredOnReturn = useRef(false);
+  // Track if a bio login attempt is currently in-flight to prevent double-triggers
+  const bioInFlight = useRef(false);
   const MAX_BIO_ATTEMPTS = 3;
+
+  // ─── Biometric login handler (defined as ref to avoid stale closures in effects) ──
+  const handleBioLoginRef = useRef(null);
+
+  const handleBioLogin = async (isAutomatic = false) => {
+    // Prevent concurrent bio login attempts (double-trigger guard)
+    if (bioInFlight.current) return;
+    bioInFlight.current = true;
+
+    setError(''); // pulisce eventuali errori precedenti
+    setLoading(true);
+    setLoadingText('Autenticazione...');
+    let unlocked = false;
+
+    try {
+      if (!window.api) throw new Error("API non disponibile");
+
+      // 1. Recupera la password dal secure storage (Keychain/Keystore)
+      const bioResult = await window.api.loginBio();
+
+      // Possibili ritorni normalizzati:
+      // - string: la password (legacy)
+      // - { success: true }: il backend ha già sbloccato il vault
+      // - null: fallito / annullato
+      if (!bioResult) throw new Error("Autenticazione annullata o fallita");
+
+      if (typeof bioResult === 'object' && bioResult.success) {
+        // Backend ha già effettuato lo sblocco: chiamiamo onUnlock direttamente
+        setPassword('');
+        setShowPasswordField(false);
+        setLoading(false);
+        unlocked = true;
+        onUnlock();
+        return;
+      }
+
+      // Altrimenti bioResult è la password in chiaro (string)
+      const savedPassword = String(bioResult);
+      // 2. Usa la password recuperata per sbloccare il vault
+      const result = await window.api.unlockVault(savedPassword);
+      if (result.success) {
+        // Pulizia e callback di successo: non mostrare più il form
+        setPassword('');
+        setShowPasswordField(false);
+        // Assicuriamoci di disabilitare il loading PRIMA di smontare il componente
+        setLoading(false);
+        unlocked = true; // segnala che abbiamo effettuato l'unlock con successo
+        onUnlock();
+        return; // esce subito
+      }
+      throw new Error(result.error || "Errore decifratura vault");
+    } catch (err) {
+      const errMsg = err?.message || String(err);
+      const isAndroidHandoff = errMsg.includes('android-bio-use-frontend');
+
+      console.warn("Login bio fallito:", isAndroidHandoff ? "(Android handoff)" : err);
+
+      // Calcola next failed count senza dipendere da aggiornamenti asincroni dello state
+      const nextFailed = bioFailed + (isAndroidHandoff ? 0 : 1);
+      if (!isAndroidHandoff) {
+        setBioFailed(prev => prev + 1);
+      }
+
+      // Mostriamo il campo password come fallback PRIMA di ogni altra cosa
+      setShowPasswordField(true);
+
+      if (nextFailed >= MAX_BIO_ATTEMPTS) {
+        setError('Troppi tentativi falliti. Usa la password.');
+      } else if (!isAutomatic && !isAndroidHandoff) {
+        setError('Riconoscimento fallito o annullato.');
+      }
+    } finally {
+      bioInFlight.current = false;
+      // Se non abbiamo già fatto l'unlock (che chiama onUnlock e può smontare il componente),
+      // assicuriamoci di stoppare il loading. Evitiamo setState su componenti smontati.
+      if (!unlocked) setLoading(false);
+    }
+  };
+
+  // Keep the ref up-to-date so effects always call the latest version
+  handleBioLoginRef.current = handleBioLogin;
 
   useEffect(() => {
     // Controllo sicurezza: se l'API non è esposta, mostra errore o fallback
@@ -76,7 +159,10 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
               bioTriggered.current = true;
               // Nascondi il form mentre il popup biometrico di sistema appare
               setShowPasswordField(false);
-              setTimeout(() => handleBioLogin(true), 400);
+              // Use ref to always call the latest version of handleBioLogin
+              setTimeout(() => {
+                if (handleBioLoginRef.current) handleBioLoginRef.current(true);
+              }, 400);
             } else if (saved && autoLocked) {
               // Autolock: mostra il pulsante biometria, NON triggera il popup.
               // Il trigger avverrà via visibilitychange quando l'utente torna.
@@ -106,19 +192,24 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
     if (!autoLocked || !bioAvailable || !bioSaved || bioFailed >= MAX_BIO_ATTEMPTS) return;
     if (isNew) return;
 
+    const triggerBio = () => {
+      // Always call the latest version via ref — avoids stale closure bugs
+      if (handleBioLoginRef.current) handleBioLoginRef.current(true);
+    };
+
     const handleVisibility = () => {
       // document.visibilityState === 'visible' → l'utente è tornato su LexFlow
       if (document.visibilityState === 'visible' && !bioAutoTriggeredOnReturn.current && !showPasswordField) {
         bioAutoTriggeredOnReturn.current = true;
         // Breve delay per dare tempo al focus della finestra
-        setTimeout(() => handleBioLogin(true), 300);
+        setTimeout(triggerBio, 300);
       }
     };
 
     // Se la finestra è già visibile (l'utente è davanti a LexFlow), triggera subito
     if (document.visibilityState === 'visible' && !bioAutoTriggeredOnReturn.current && !showPasswordField) {
       bioAutoTriggeredOnReturn.current = true;
-      setTimeout(() => handleBioLogin(true), 600);
+      setTimeout(triggerBio, 600);
     }
 
     document.addEventListener('visibilitychange', handleVisibility);
@@ -126,7 +217,7 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
     const handleFocus = () => {
       if (!bioAutoTriggeredOnReturn.current && !showPasswordField) {
         bioAutoTriggeredOnReturn.current = true;
-        setTimeout(() => handleBioLogin(true), 300);
+        setTimeout(triggerBio, 300);
       }
     };
     window.addEventListener('focus', handleFocus);
@@ -237,76 +328,6 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
       console.error(err);
       setError('Errore di sistema durante lo sblocco');
       setLoading(false);
-    }
-  };
-
-  const handleBioLogin = async (isAutomatic = false) => {
-    setError(''); // pulisce eventuali errori precedenti
-    setLoading(true);
-    setLoadingText('Autenticazione...');
-    let unlocked = false;
-
-    try {
-      if (!window.api) throw new Error("API non disponibile");
-
-      // 1. Recupera la password dal secure storage (Keychain/Keystore)
-      const bioResult = await window.api.loginBio();
-
-      // Possibili ritorni normalizzati:
-      // - string: la password (legacy)
-      // - { success: true }: il backend ha già sbloccato il vault
-      // - null: fallito / annullato
-      if (!bioResult) throw new Error("Autenticazione annullata o fallita");
-
-      if (typeof bioResult === 'object' && bioResult.success) {
-        // Backend ha già effettuato lo sblocco: chiamiamo onUnlock direttamente
-        setPassword('');
-        setShowPasswordField(false);
-        setLoading(false);
-        unlocked = true;
-        onUnlock();
-        return;
-      }
-
-      // Altrimenti bioResult è la password in chiaro (string)
-      const savedPassword = String(bioResult);
-      // 2. Usa la password recuperata per sbloccare il vault
-      const result = await window.api.unlockVault(savedPassword);
-      if (result.success) {
-        // Pulizia e callback di successo: non mostrare più il form
-        setPassword('');
-        setShowPasswordField(false);
-        // Assicuriamoci di disabilitare il loading PRIMA di smontare il componente
-        setLoading(false);
-        unlocked = true; // segnala che abbiamo effettuato l'unlock con successo
-        onUnlock();
-        return; // esce subito
-      }
-      throw new Error(result.error || "Errore decifratura vault");
-    } catch (err) {
-      const errMsg = err?.message || String(err);
-      const isAndroidHandoff = errMsg.includes('android-bio-use-frontend');
-
-      console.warn("Login bio fallito:", isAndroidHandoff ? "(Android handoff)" : err);
-
-      // Calcola next failed count senza dipendere da aggiornamenti asincroni dello state
-      const nextFailed = bioFailed + (isAndroidHandoff ? 0 : 1);
-      if (!isAndroidHandoff) {
-        setBioFailed(prev => prev + 1);
-      }
-
-      // Mostriamo il campo password come fallback PRIMA di ogni altra cosa
-      setShowPasswordField(true);
-
-      if (nextFailed >= MAX_BIO_ATTEMPTS) {
-        setError('Troppi tentativi falliti. Usa la password.');
-      } else if (!isAutomatic && !isAndroidHandoff) {
-        setError('Riconoscimento fallito o annullato.');
-      }
-    } finally {
-      // Se non abbiamo già fatto l'unlock (che chiama onUnlock e può smontare il componente),
-      // assicuriamoci di stoppare il loading. Evitiamo setState su componenti smontati.
-      if (!unlocked) setLoading(false);
     }
   };
 

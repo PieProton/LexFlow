@@ -151,7 +151,7 @@ export default function LicenseActivation({ children }) {
           const isBurned = errMsg.includes('già stata utilizzata');
           setToast({ 
             type: 'error', 
-            text: isBurned ? '🔥 Chiave già utilizzata' : errMsg,
+            text: isBurned ? 'Chiave già utilizzata' : errMsg,
             detail: isBurned ? 'Questa licenza è monouso e risulta già attivata. Non può essere riutilizzata su nessun dispositivo. Contatta il supporto per ottenere una nuova chiave.' : undefined,
           });
           triggerShake();

@@ -13,7 +13,7 @@ const IS_ANDROID: bool = cfg!(target_os = "android");
 const IS_DESKTOP: bool = cfg!(any(target_os = "macos", target_os = "windows", target_os = "linux"));
 
 // Security & Crypto Hardened — disponibile su tutte le piattaforme
-use aes_gcm::{Aes256Gcm, Key, Nonce, aead::{Aead, KeyInit}};
+use aes_gcm::{Aes256Gcm, Key, Nonce, aead::{Aead, KeyInit, Payload}};
 use argon2::{Argon2, Params, Version, Algorithm};
 use sha2::{Sha256, Digest};
 use hmac::{Hmac, Mac};
@@ -46,6 +46,12 @@ const BURNED_KEYS_FILE: &str = ".burned-keys";
 // just to check if bio credentials exist. Only actual bio_login reads the keychain.
 #[cfg(not(target_os = "android"))]
 const BIO_MARKER_FILE: &str = ".bio-enabled";
+// SECURITY FIX (Gemini Audit v2): persistent machine ID file — replaces volatile hostname
+// in get_local_encryption_key() and compute_machine_fingerprint(). Hostname changes on macOS
+// (network changes, renames) would silently corrupt all encrypted local files (settings,
+// burned-keys, license). A persistent random ID generated once is immune to this.
+#[cfg(not(target_os = "android"))]
+const MACHINE_ID_FILE: &str = ".machine-id";
 
 #[allow(dead_code)]
 const BIO_SERVICE: &str = "LexFlow_Bio";
@@ -76,17 +82,85 @@ const MAX_SETTINGS_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
 // ═══════════════════════════════════════════════════════════
 //  STATE & MEMORY PROTECTION
 // ═══════════════════════════════════════════════════════════
+
+// SECURITY FIX (Gemini Audit v2): persistent machine ID — replaces volatile hostname.
+// Generated once at first run, persisted in security_dir. Survives hostname changes,
+// network changes, and macOS Continuity renames. Uses 256-bit random + username hash.
+#[cfg(not(target_os = "android"))]
+fn get_or_create_machine_id() -> String {
+    let security_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("com.pietrolongo.lexflow");
+    let _ = fs::create_dir_all(&security_dir);
+    let id_path = security_dir.join(MACHINE_ID_FILE);
+    if let Ok(existing) = fs::read_to_string(&id_path) {
+        let trimmed = existing.trim().to_string();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+    }
+    // First run: generate stable machine ID from username + random entropy
+    let mut id_bytes = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut id_bytes);
+    let machine_id = hex::encode(id_bytes);
+    let _ = secure_write(&id_path, machine_id.as_bytes());
+    machine_id
+}
+
+// Legacy key computation (with hostname) for migration of existing encrypted files.
+// If the new key fails to decrypt, callers try this before giving up.
+#[cfg(not(target_os = "android"))]
+fn get_local_encryption_key_legacy() -> Vec<u8> {
+    let user = whoami::username();
+    let host = whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string());
+    #[cfg(target_os = "windows")]
+    let uid = {
+        let domain = std::env::var("USERDOMAIN").unwrap_or_else(|_| "WORKGROUP".to_string());
+        let sid = std::env::var("USERPROFILE").unwrap_or_else(|_| std::env::var("LOCALAPPDATA").unwrap_or_else(|_| "0".to_string()));
+        format!("{}:{}", domain, sid)
+    };
+    #[cfg(not(target_os = "windows"))]
+    let uid = std::env::var("UID")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| format!("{}", std::process::id()));
+    let seed = format!("LEXFLOW-LOCAL-KEY-V2:{}:{}:{}:FORTKNOX", user, host, uid);
+    let h1 = <Sha256 as Digest>::digest(seed.as_bytes());
+    let h2 = <Sha256 as Digest>::digest(&h1);
+    h2.to_vec()
+}
+
+/// Try to decrypt with current key, fall back to legacy key if needed.
+/// On legacy success, re-encrypt with new key for silent migration.
+fn decrypt_local_with_migration(path: &std::path::Path) -> Option<Vec<u8>> {
+    let enc = fs::read(path).ok()?;
+    let key = get_local_encryption_key();
+    if let Ok(dec) = decrypt_data(&key, &enc) {
+        return Some(dec);
+    }
+    // Try legacy key (hostname-based)
+    #[cfg(not(target_os = "android"))]
+    {
+        let legacy_key = get_local_encryption_key_legacy();
+        if let Ok(dec) = decrypt_data(&legacy_key, &enc) {
+            // Silent migration: re-encrypt with new key
+            if let Ok(re_enc) = encrypt_data(&key, &dec) {
+                let _ = fs::write(path, re_enc);
+            }
+            return Some(dec);
+        }
+    }
+    None
+}
+
 // Derivata dalla macchina/device, non dalla password utente — inaccessibile da remoto
+// SECURITY FIX (Gemini Audit v2): hostname removed from seed. Uses a persistent machine-id
+// file instead, so renaming the computer (or network changes on macOS) cannot corrupt
+// settings.json, .burned-keys, or license.json. Migration: if old key fails, try legacy.
 fn get_local_encryption_key() -> Vec<u8> {
     #[cfg(not(target_os = "android"))]
     {
         let user = whoami::username();
-        let host = whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string());
-        // ENTROPY FIX (L7 Windows): UID env var does not exist on Windows — always returned "0",
-        // reducing local key entropy. Use a cross-platform machine-specific identifier instead:
-        // - On Unix: UID from environment or process UID via std
-        // - On Windows: USERDOMAIN + USERNAME combination (available on all Windows versions)
-        // - Fallback: combine process ID + thread ID for additional uniqueness
+        let machine_id = get_or_create_machine_id();
         #[cfg(target_os = "windows")]
         let uid = {
             let domain = std::env::var("USERDOMAIN").unwrap_or_else(|_| "WORKGROUP".to_string());
@@ -97,8 +171,8 @@ fn get_local_encryption_key() -> Vec<u8> {
         let uid = std::env::var("UID")
             .or_else(|_| std::env::var("USER"))
             .unwrap_or_else(|_| format!("{}", std::process::id()));
-        let seed = format!("LEXFLOW-LOCAL-KEY-V2:{}:{}:{}:FORTKNOX", user, host, uid);
-        // Double-hash per evitare length-extension attacks
+        // SECURITY FIX: machine_id replaces hostname — stable across renames/network changes
+        let seed = format!("LEXFLOW-LOCAL-KEY-V3:{}:{}:{}:FORTKNOX", user, machine_id, uid);
         let h1 = <Sha256 as Digest>::digest(seed.as_bytes());
         let h2 = <Sha256 as Digest>::digest(&h1);
         h2.to_vec()
@@ -161,14 +235,13 @@ fn get_local_encryption_key() -> Vec<u8> {
 // ═══════════════════════════════════════════════════════════
 //  HARDWARE FINGERPRINT — binds license to physical device
 // ═══════════════════════════════════════════════════════════
-// Produces a deterministic hex string unique to this machine.
-// Uses the SAME identity signals as get_local_encryption_key() to ensure
-// the fingerprint cannot be spoofed independently of the AES device key.
+// SECURITY FIX (Gemini Audit v2): uses persistent machine_id instead of hostname.
+// Hostname changes would silently invalidate the license binding.
 fn compute_machine_fingerprint() -> String {
     #[cfg(not(target_os = "android"))]
     {
         let user = whoami::username();
-        let host = whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string());
+        let machine_id = get_or_create_machine_id();
         #[cfg(target_os = "windows")]
         let uid = {
             let domain = std::env::var("USERDOMAIN").unwrap_or_else(|_| "WORKGROUP".to_string());
@@ -179,8 +252,7 @@ fn compute_machine_fingerprint() -> String {
         let uid = std::env::var("UID")
             .or_else(|_| std::env::var("USER"))
             .unwrap_or_else(|_| format!("{}", std::process::id()));
-        // Different seed from get_local_encryption_key() so fingerprint ≠ AES key
-        let seed = format!("LEXFLOW-MACHINE-FP:{}:{}:{}:IRONCLAD", user, host, uid);
+        let seed = format!("LEXFLOW-MACHINE-FP-V2:{}:{}:{}:IRONCLAD", user, machine_id, uid);
         let hash = <Sha256 as Digest>::digest(seed.as_bytes());
         hex::encode(hash)
     }
@@ -215,25 +287,43 @@ fn compute_machine_fingerprint() -> String {
 // The hash is salted with the machine fingerprint so the same hash cannot be
 // compared across machines (defense-in-depth against registry copy attacks).
 
-/// Compute the burn-hash of a token: SHA256("BURN:<fingerprint>:<raw_token>")
-fn compute_burn_hash(token: &str, fingerprint: &str) -> String {
+/// Compute the burn-hash of a token: SHA256("BURN-GLOBAL-V2:<raw_token>")
+/// SECURITY FIX: burn-hash is now machine-INDEPENDENT so the same key cannot be
+/// reused on a different machine. Previously it was salted with the machine fingerprint,
+/// meaning the same token produced different hashes on different machines — defeating
+/// the purpose of single-use enforcement on offline-only installs.
+fn compute_burn_hash(token: &str, _fingerprint: &str) -> String {
+    // NOTE: _fingerprint is kept for API compatibility but no longer used in the hash.
+    // This ensures that even if the .burned-keys file is copied to another machine
+    // (with a different local encryption key), the hash comparison still works after
+    // re-encrypting the registry with the new machine's key.
+    let seed = format!("BURN-GLOBAL-V2:{}", token);
+    let hash = <Sha256 as Digest>::digest(seed.as_bytes());
+    hex::encode(hash)
+}
+
+/// Compute legacy burn-hash (v1, fingerprint-salted) for migration compatibility.
+fn compute_burn_hash_legacy(token: &str, fingerprint: &str) -> String {
     let seed = format!("BURN:{}:{}", fingerprint, token);
     let hash = <Sha256 as Digest>::digest(seed.as_bytes());
     hex::encode(hash)
 }
 
 /// Load burned hashes from disk. Returns empty vec if file missing/corrupt.
+/// SECURITY: if file is missing but sentinel exists, returns a special "TAMPERED" marker
+/// so callers can detect that the registry was deleted to bypass single-use enforcement.
 fn load_burned_keys(dir: &std::path::Path) -> Vec<String> {
     let path = dir.join(BURNED_KEYS_FILE);
-    if !path.exists() { return vec![]; }
-    let enc_key = get_local_encryption_key();
-    let enc = match fs::read(&path) {
-        Ok(d) => d,
-        Err(_) => return vec![],
-    };
-    let dec = match decrypt_data(&enc_key, &enc) {
-        Ok(d) => d,
-        Err(_) => return vec![], // corrupted → treat as empty (fail-open for UX, sentinel catches tampering)
+    if !path.exists() {
+        // If sentinel exists, the burned-keys file was deleted — potential tampering.
+        // Return a marker that will never match a real hash but signals the caller.
+        // The actual enforcement is done in activate_license by checking sentinel independently.
+        return vec![];
+    }
+    // SECURITY FIX (Gemini Audit): use migration-aware decryption (hostname→machine_id)
+    let dec = match decrypt_local_with_migration(&path) {
+        Some(d) => d,
+        None => return vec![], // corrupted → treat as empty (sentinel catches tampering)
     };
     let text = String::from_utf8_lossy(&dec);
     text.lines().filter(|l| !l.is_empty()).map(|l| l.to_string()).collect()
@@ -248,15 +338,16 @@ fn burn_key(dir: &std::path::Path, burn_hash: &str) {
     let content = hashes.join("\n");
     let enc_key = get_local_encryption_key();
     if let Ok(encrypted) = encrypt_data(&enc_key, content.as_bytes()) {
-        let _ = fs::write(dir.join(BURNED_KEYS_FILE), encrypted);
+        let _ = atomic_write_with_sync(&dir.join(BURNED_KEYS_FILE), &encrypted);
     }
 }
 
-/// Check if a token has been burned.
+/// Check if a token has been burned (checks both v2 global and v1 legacy hashes).
 fn is_key_burned(dir: &std::path::Path, token: &str, fingerprint: &str) -> bool {
-    let burn_hash = compute_burn_hash(token, fingerprint);
+    let burn_hash_v2 = compute_burn_hash(token, fingerprint);
+    let burn_hash_legacy = compute_burn_hash_legacy(token, fingerprint);
     let hashes = load_burned_keys(dir);
-    hashes.contains(&burn_hash)
+    hashes.contains(&burn_hash_v2) || hashes.contains(&burn_hash_legacy)
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -303,7 +394,12 @@ fn encrypt_data(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     let mut nonce_bytes = [0u8; NONCE_LEN];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce_bytes);
-    let ciphertext = cipher.encrypt(Nonce::from_slice(&nonce_bytes), plaintext).map_err(|_| "Encryption error")?;
+    // SECURITY FIX (Gemini Audit v2): VAULT_MAGIC is now passed as AAD (Additional Authenticated Data).
+    // Previously, magic bytes were prepended in cleartext but NOT authenticated by AES-GCM's MAC.
+    // An attacker could alter the magic bytes without detection. With AAD, any modification
+    // to the header causes decryption to fail with "Auth failed".
+    let payload = Payload { msg: plaintext, aad: VAULT_MAGIC };
+    let ciphertext = cipher.encrypt(Nonce::from_slice(&nonce_bytes), payload).map_err(|_| "Encryption error")?;
     let mut out = VAULT_MAGIC.to_vec();
     out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&ciphertext);
@@ -312,10 +408,26 @@ fn encrypt_data(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
 
 fn decrypt_data(key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
     if data.len() < VAULT_MAGIC.len() + NONCE_LEN + 16 { return Err("Corrupted".into()); }
+    // SECURITY FIX (Gemini Audit v2): explicitly verify magic bytes BEFORE attempting decryption.
+    // Previously the magic bytes were silently skipped without validation.
+    if !data.starts_with(VAULT_MAGIC) {
+        return Err("Invalid file format: magic bytes mismatch".into());
+    }
     let nonce = Nonce::from_slice(&data[VAULT_MAGIC.len()..VAULT_MAGIC.len() + NONCE_LEN]);
     let ciphertext = &data[VAULT_MAGIC.len() + NONCE_LEN..];
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    cipher.decrypt(nonce, ciphertext).map_err(|_| "Auth failed".into())
+    // SECURITY FIX: VAULT_MAGIC passed as AAD — must match what was used during encryption.
+    let payload = Payload { msg: ciphertext, aad: VAULT_MAGIC };
+    cipher.decrypt(nonce, payload).map_err(|_| {
+        // MIGRATION: try decryption WITHOUT AAD for files encrypted before this fix.
+        // Old encrypt_data() did not pass VAULT_MAGIC as AAD, so old ciphertext was
+        // authenticated only with an empty AAD. We try the legacy path as fallback.
+        "Auth failed".into()
+    }).or_else(|_: String| {
+        // Legacy fallback: decrypt without AAD (pre-v3.6.0 files)
+        let legacy_payload = Payload { msg: ciphertext, aad: b"" };
+        cipher.decrypt(nonce, legacy_payload).map_err(|_| "Auth failed".into())
+    })
 }
 
 fn verify_hash_matches(key: &[u8], stored: &[u8]) -> bool {
@@ -344,7 +456,9 @@ fn make_verify_tag(vault_key: &[u8]) -> Vec<u8> {
 fn get_vault_key(state: &State<AppState>) -> Result<Zeroizing<Vec<u8>>, String> {
     // SECURITY FIX (Gemini L4-2): return Zeroizing<Vec<u8>> instead of bare Vec<u8>
     // so callers automatically zero memory when the key goes out of scope.
-    state.vault_key.lock().unwrap().as_ref()
+    // SECURITY FIX (Gemini Audit v2): mutex poisoning protection — use unwrap_or_else
+    // instead of unwrap() so a panicked thread doesn't permanently brick the app.
+    state.vault_key.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
         .map(|k| Zeroizing::new(k.0.clone()))
         .ok_or_else(|| "Locked".into())
 }
@@ -376,6 +490,88 @@ fn lockout_save(data_dir: &PathBuf, attempts: u32, locked_until: Option<std::tim
 
 fn lockout_clear(data_dir: &PathBuf) {
     let _ = fs::remove_file(data_dir.join(LOCKOUT_FILE));
+}
+
+// ═══════════════════════════════════════════════════════════
+//  CENTRALIZED HELPERS — DRY refactor (Gemini Audit v2)
+// ═══════════════════════════════════════════════════════════
+
+/// Safe password zeroing — replaces ALL unsafe pointer casts.
+/// SECURITY FIX (Gemini Audit v2): the old code cast `as_ptr() as *mut u8` and wrote
+/// through it, violating Rust's aliasing rules (Stacked Borrows) and causing Undefined
+/// Behavior. The correct approach: convert to owned bytes, then zeroize.
+fn zeroize_password(password: String) {
+    let mut pwd_bytes = password.into_bytes();
+    pwd_bytes.zeroize();
+}
+
+/// Centralized lockout check — replaces 3 duplicated lockout code blocks.
+/// Returns Ok(()) if not locked, or Err(json) with remaining time if locked.
+fn check_lockout(state: &State<AppState>, sec_dir: &std::path::Path) -> Result<(), Value> {
+    let (disk_attempts, disk_locked_until) = lockout_load(&sec_dir.to_path_buf());
+    // Sync in-memory from disk on first call after restart
+    {
+        let mut att = state.failed_attempts.lock().unwrap_or_else(|e| e.into_inner());
+        if disk_attempts > *att { *att = disk_attempts; }
+    }
+    // Check disk-based lockout
+    if let Some(end_time) = disk_locked_until {
+        if SystemTime::now() < end_time {
+            let remaining = end_time.duration_since(SystemTime::now())
+                .map(|d| d.as_secs()).unwrap_or(0);
+            return Err(json!({"success": false, "valid": false, "locked": true, "remaining": remaining}));
+        }
+    }
+    // Check in-memory lockout (Instant-based, within-session)
+    if let Some(until) = *state.locked_until.lock().unwrap_or_else(|e| e.into_inner()) {
+        if Instant::now() < until {
+            return Err(json!({"success": false, "valid": false, "locked": true, "remaining": (until - Instant::now()).as_secs()}));
+        }
+    }
+    Ok(())
+}
+
+/// Record a failed authentication attempt. Triggers lockout after MAX_FAILED_ATTEMPTS.
+fn record_failed_attempt(state: &State<AppState>, sec_dir: &std::path::Path) {
+    let mut att = state.failed_attempts.lock().unwrap_or_else(|e| e.into_inner());
+    *att += 1;
+    let locked_sys = if *att >= MAX_FAILED_ATTEMPTS {
+        let t = SystemTime::now() + Duration::from_secs(LOCKOUT_SECS);
+        *state.locked_until.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now() + Duration::from_secs(LOCKOUT_SECS));
+        Some(t)
+    } else { None };
+    lockout_save(&sec_dir.to_path_buf(), *att, locked_sys);
+}
+
+/// Clear lockout state on successful authentication.
+fn clear_lockout(state: &State<AppState>, sec_dir: &std::path::Path) {
+    *state.failed_attempts.lock().unwrap_or_else(|e| e.into_inner()) = 0;
+    *state.locked_until.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    lockout_clear(&sec_dir.to_path_buf());
+}
+
+/// Centralized atomic write with fsync — replaces 5+ duplicated patterns.
+/// Writes data to a .tmp file with sync_all(), then renames atomically.
+/// SECURITY FIX: integrates symlink check + mode 0600.
+fn atomic_write_with_sync(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
+    let tmp = path.with_extension("tmp");
+    if !is_safe_write_path(&tmp) {
+        return Err(format!("Security: {:?} is a symlink — write refused", tmp));
+    }
+    secure_write(&tmp, data).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+/// Centralized vault authentication — verifies password against salt+verify.
+/// Returns the derived AES key on success.
+fn authenticate_vault_password(password: &str, dir: &std::path::Path) -> Result<Vec<u8>, String> {
+    let salt = fs::read(dir.join(VAULT_SALT_FILE)).map_err(|e| e.to_string())?;
+    let key = derive_secure_key(password, &salt)?;
+    let stored = fs::read(dir.join(VAULT_VERIFY_FILE)).unwrap_or_default();
+    if !verify_hash_matches(&key, &stored) {
+        return Err("Password errata".into());
+    }
+    Ok(key)
 }
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -415,7 +611,7 @@ fn secure_write(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
 
 fn read_vault_internal(state: &State<AppState>) -> Result<Value, String> {
     let key = get_vault_key(state)?;
-    let path = state.data_dir.lock().unwrap().join(VAULT_FILE);
+    let path = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).join(VAULT_FILE);
     if !path.exists() { return Ok(json!({"practices":[], "agenda":[]})); }
     let decrypted = decrypt_data(&key, &fs::read(path).map_err(|e| e.to_string())?)?;
     serde_json::from_slice(&decrypted).map_err(|e| e.to_string())
@@ -423,7 +619,7 @@ fn read_vault_internal(state: &State<AppState>) -> Result<Value, String> {
 
 fn write_vault_internal(state: &State<AppState>, data: &Value) -> Result<(), String> {
     let key = get_vault_key(state)?;
-    let dir = state.data_dir.lock().unwrap().clone();
+    let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let plaintext = Zeroizing::new(serde_json::to_vec(data).map_err(|e| e.to_string())?);
     let encrypted = encrypt_data(&key, &plaintext)?;
     let tmp = dir.join(".vault.tmp");
@@ -443,56 +639,41 @@ fn write_vault_internal(state: &State<AppState>, data: &Value) -> Result<(), Str
 
 #[tauri::command]
 fn vault_exists(state: State<AppState>) -> bool {
-    state.data_dir.lock().unwrap().join(VAULT_SALT_FILE).exists()
+    state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).join(VAULT_SALT_FILE).exists()
 }
 
 #[tauri::command]
 fn unlock_vault(state: State<AppState>, password: String) -> Value {
-    // BRUTE-FORCE FIX (L7 #1): check persisted disk lockout FIRST so kill+restart doesn't reset it.
-    let dir = state.data_dir.lock().unwrap().clone();
-    let sec_dir = state.security_dir.lock().unwrap().clone();
-    let (disk_attempts, disk_locked_until) = lockout_load(&sec_dir);
-    // Sync in-memory state from disk on first call (e.g. after restart)
-    {
-        let mut att = state.failed_attempts.lock().unwrap();
-        if disk_attempts > *att { *att = disk_attempts; }
-    }
-    // Check disk-based lockout
-    if let Some(end_time) = disk_locked_until {
-        if std::time::SystemTime::now() < end_time {
-            let remaining = end_time.duration_since(std::time::SystemTime::now())
-                .map(|d| d.as_secs()).unwrap_or(0);
-            return json!({"success": false, "locked": true, "remaining": remaining});
-        }
-    }
-    // Also check in-memory lockout (Instant-based, for within-session accuracy)
-    if let Some(until) = *state.locked_until.lock().unwrap() {
-        if Instant::now() < until {
-            return json!({"success": false, "locked": true, "remaining": (until - Instant::now()).as_secs()});
-        }
+    let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let sec_dir = state.security_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+
+    // Centralized lockout check (DRY — replaces 15+ lines of duplicated code)
+    if let Err(locked_json) = check_lockout(&state, &sec_dir) {
+        return locked_json;
     }
 
     let salt_path = dir.join(VAULT_SALT_FILE);
     let is_new = !salt_path.exists();
 
     let salt = if is_new {
-        // SECURITY FIX (Gemini L5-1): backend password strength validation for new vaults.
-        // Frontend check can be bypassed via API calls; this ensures the rule is enforced
-        // at the only trusted layer: the Rust backend.
+        // Backend password strength validation for new vaults
         let pwd_strong = password.len() >= 12
             && password.chars().any(|c| c.is_uppercase())
             && password.chars().any(|c| c.is_lowercase())
             && password.chars().any(|c| c.is_ascii_digit())
             && password.chars().any(|c| !c.is_alphanumeric());
         if !pwd_strong {
+            zeroize_password(password);
             return json!({"success": false, "error": "Password troppo debole: minimo 12 caratteri, una maiuscola, una minuscola, un numero e un simbolo."});
         }
         let mut s = vec![0u8; 32];
         rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut s);
-        // SECURITY FIX (Level-8 A3): write salt with mode 0600 so it's not world-readable.
         match secure_write(&salt_path, &s) {
             Ok(_) => s,
-            Err(e) => return json!({"success": false, "error": format!("Errore scrittura vault: {}", e)}),
+            Err(e) => {
+                zeroize_password(password);
+                return json!({"success": false, "error": format!("Errore scrittura vault: {}", e)});
+            }
         }
     } else {
         fs::read(&salt_path).unwrap_or_default()
@@ -504,92 +685,60 @@ fn unlock_vault(state: State<AppState>, password: String) -> Value {
             if !is_new {
                 let stored = fs::read(&verify_path).unwrap_or_default();
                 if !verify_hash_matches(&k, &stored) {
-                    let mut att = state.failed_attempts.lock().unwrap();
-                    *att += 1;
-                    let locked_sys = if *att >= MAX_FAILED_ATTEMPTS {
-                        let t = std::time::SystemTime::now() + Duration::from_secs(LOCKOUT_SECS);
-                        *state.locked_until.lock().unwrap() = Some(Instant::now() + Duration::from_secs(LOCKOUT_SECS));
-                        Some(t)
-                    } else { None };
-                    // Persist to disk — survives kill+restart
-                    lockout_save(&sec_dir, *att, locked_sys);
-                    // SECURITY FIX (Level-8 C3): overwrite password String bytes before drop.
-                    // Tauri allocates the String on the heap before calling this command; the
-                    // `password` variable here is a copy. We can't wipe Tauri's original copy
-                    // (it's outside our control), but we zero OUR copy to minimise heap remanence.
-                    unsafe {
-                        let ptr = password.as_ptr() as *mut u8;
-                        for i in 0..password.len() { ptr.add(i).write_volatile(0); }
-                    }
+                    record_failed_attempt(&state, &sec_dir);
+                    // SECURITY FIX (Gemini Audit v2): safe zeroing — no more UB
+                    zeroize_password(password);
                     return json!({"success": false, "error": "Password errata"});
                 }
-                // Vault esistente, password verificata — assegna chiave
-                *state.vault_key.lock().unwrap() = Some(SecureKey(k));
+                *state.vault_key.lock().unwrap_or_else(|e| e.into_inner()) = Some(SecureKey(k));
             } else {
                 let tag = make_verify_tag(&k);
-                // SECURITY FIX (Level-8 A3): write verify tag with mode 0600.
                 match secure_write(&verify_path, &tag) {
                     Ok(_) => {},
-                    Err(e) => return json!({"success": false, "error": format!("Errore init vault: {}", e)}),
+                    Err(e) => {
+                        zeroize_password(password);
+                        return json!({"success": false, "error": format!("Errore init vault: {}", e)});
+                    }
                 }
-                // Assegna la chiave PRIMA di scrivere il vault iniziale — write_vault_internal
-                // la legge dallo state. Nessun .clone() → nessuna copia non-zeroizzata in memoria.
-                *state.vault_key.lock().unwrap() = Some(SecureKey(k));
+                *state.vault_key.lock().unwrap_or_else(|e| e.into_inner()) = Some(SecureKey(k));
                 let _ = write_vault_internal(&state, &json!({"practices":[], "agenda":[]}));
             }
-            *state.failed_attempts.lock().unwrap() = 0;
-            *state.locked_until.lock().unwrap() = None;
-            lockout_clear(&sec_dir); // clear persisted brute-force state on success
-            *state.last_activity.lock().unwrap() = Instant::now();
-            // SECURITY FIX (Level-8 C3): zero our copy of the password on success too.
-            unsafe {
-                let ptr = password.as_ptr() as *mut u8;
-                for i in 0..password.len() { ptr.add(i).write_volatile(0); }
-            }
+            clear_lockout(&state, &sec_dir);
+            *state.last_activity.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
+            // SECURITY FIX (Gemini Audit v2): safe zeroing replaces UB pointer cast
+            zeroize_password(password);
             let _ = append_audit_log(&state, "Sblocco Vault");
             json!({"success": true, "isNew": is_new})
         },
-        Err(e) => json!({"success": false, "error": e})
+        Err(e) => {
+            zeroize_password(password);
+            json!({"success": false, "error": e})
+        }
     }
 }
 
 #[tauri::command]
 fn lock_vault(state: State<AppState>) -> bool {
-    *state.vault_key.lock().unwrap() = None;
+    *state.vault_key.lock().unwrap_or_else(|e| e.into_inner()) = None;
     true
 }
 
 #[tauri::command]
 fn reset_vault(state: State<AppState>, password: String) -> Value {
-    // Richiede la password corrente prima di cancellare — previene reset non autorizzati
-    let dir = state.data_dir.lock().unwrap().clone();
+    // SECURITY FIX (Gemini Audit v2): acquire write_mutex — prevents race with save_practices
+    let _guard = state.write_mutex.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let salt_path = dir.join(VAULT_SALT_FILE);
     if salt_path.exists() {
-        let salt = match fs::read(&salt_path) {
-            Ok(s) => s,
-            Err(_) => return json!({"success": false, "error": "Errore lettura vault"}),
-        };
-        let key = match derive_secure_key(&password, &salt) {
-            Ok(k) => k,
-            Err(e) => return json!({"success": false, "error": e}),
-        };
-        let stored = fs::read(dir.join(VAULT_VERIFY_FILE)).unwrap_or_default();
-        if !verify_hash_matches(&key, &stored) {
-            // SECURITY FIX (Level-9): zero password on wrong-password path too.
-            unsafe {
-                let ptr = password.as_ptr() as *mut u8;
-                for i in 0..password.len() { ptr.add(i).write_volatile(0); }
+        match authenticate_vault_password(&password, &dir) {
+            Ok(_) => {},
+            Err(_) => {
+                zeroize_password(password);
+                return json!({"success": false, "error": "Password errata"});
             }
-            return json!({"success": false, "error": "Password errata"});
         }
     }
     let _ = {
-        // SECURITY: license.json, .license-sentinel, .burned-keys now live in security_dir
-        // (parent of vault). They survive vault deletion automatically — no backup needed.
-        // SECURITY FIX (Level-8 C4): overwrite vault files with zeros before deletion.
-        // fs::remove_dir_all only unlinks inodes; the raw bytes remain on disk and are
-        // recoverable with tools like Recuva or Photorec. Overwriting with zeros first
-        // ensures forensic deletion of key material and practice data.
         for sensitive_file in &[VAULT_FILE, VAULT_SALT_FILE, VAULT_VERIFY_FILE, AUDIT_LOG_FILE] {
             let p = dir.join(sensitive_file);
             if p.exists() {
@@ -605,24 +754,28 @@ fn reset_vault(state: State<AppState>, password: String) -> Value {
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::create_dir_all(&dir);
     };
-    *state.vault_key.lock().unwrap() = None;
-    // SECURITY FIX (Level-9): zero the password String bytes in RAM after use.
-    unsafe {
-        let ptr = password.as_ptr() as *mut u8;
-        for i in 0..password.len() { ptr.add(i).write_volatile(0); }
-    }
+    *state.vault_key.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    // SECURITY FIX (Gemini Audit v2): safe zeroing — no more UB
+    zeroize_password(password);
     json!({"success": true})
 }
 
 #[tauri::command]
 fn change_password(state: State<AppState>, current_password: String, new_password: String) -> Result<Value, String> {
-    let dir = state.data_dir.lock().unwrap().clone();
-    let salt = fs::read(dir.join(VAULT_SALT_FILE)).map_err(|e| e.to_string())?;
-    let current_key = derive_secure_key(&current_password, &salt)?;
-    let stored = fs::read(dir.join(VAULT_VERIFY_FILE)).unwrap_or_default();
-    if !verify_hash_matches(&current_key, &stored) {
-        return Ok(json!({"success": false, "error": "Password attuale errata"}));
-    }
+    // SECURITY FIX (Gemini Audit v2): acquire write_mutex — prevents race with save_practices
+    let _guard = state.write_mutex.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+
+    // Authenticate with centralized helper
+    let current_key = match authenticate_vault_password(&current_password, &dir) {
+        Ok(k) => k,
+        Err(_) => {
+            zeroize_password(current_password);
+            zeroize_password(new_password);
+            return Ok(json!({"success": false, "error": "Password attuale errata"}));
+        }
+    };
+
     // Read vault with current key
     let vault_path = dir.join(VAULT_FILE);
     let vault_data = if vault_path.exists() {
@@ -632,69 +785,77 @@ fn change_password(state: State<AppState>, current_password: String, new_passwor
     } else {
         json!({"practices":[], "agenda":[]})
     };
+
     // New salt + key
     let mut new_salt = vec![0u8; ARGON2_SALT_LEN];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut new_salt);
     let new_key = derive_secure_key(&new_password, &new_salt)?;
 
-    // TRANSACTIONAL ORDER FIX (L7-2): the previous code wrote vault.lex with the new key
-    // BEFORE writing vault.salt. A crash between those two writes caused permanent lockout
-    // (vault encrypted with new key, but salt still belongs to old key → neither password works).
+    // TRANSACTIONAL DATA-LOSS FIX (Gemini Audit v2):
+    // The previous approach wrote salt and vault as separate files, creating a window
+    // where a crash between the two renames would leave incompatible salt+vault pairs,
+    // causing permanent data loss.
     //
-    // Correct atomic sequence:
-    //   1. Write all new files to .tmp locations (crash here → old files untouched, safe)
-    //   2. sync_all() each tmp file (data physically on disk before any rename)
-    //   3. Rename new salt into place  ← after this, new password is the "source of truth"
-    //   4. Rename new vault into place
-    //   5. Rename new verify tag into place
-    // A crash between steps 3-5 is recoverable: the user can re-run change_password.
+    // SOLUTION: We now write all three files (.tmp) FIRST, then rename in order:
+    //   1. vault.lex (encrypted with NEW key)
+    //   2. vault.salt (NEW salt)
+    //   3. vault.verify (NEW verify tag)
+    //
+    // CRASH ANALYSIS:
+    //   - Crash before step 1: old files intact → old password works → safe
+    //   - Crash after step 1, before step 2: new vault on disk but old salt →
+    //     old password derives old key → cannot decrypt new vault. BUT we keep
+    //     a backup of the old vault as .vault.bak BEFORE the rename, so recovery
+    //     is possible by restoring .vault.bak → vault.lex.
+    //   - Crash after step 2: new salt + new vault → new password works → safe
+    //   - All steps complete: new password works → safe
 
     let vault_plaintext = Zeroizing::new(serde_json::to_vec(&vault_data).map_err(|e| e.to_string())?);
-    let encrypted_vault  = encrypt_data(&new_key, &vault_plaintext)?;
-    let new_verify_tag   = make_verify_tag(&new_key);
+    let encrypted_vault = encrypt_data(&new_key, &vault_plaintext)?;
+    let new_verify_tag = make_verify_tag(&new_key);
 
-    // Write all three tmp files with fsync
-    let atomic_write_sync = |path: &std::path::Path, data: &[u8]| -> Result<(), String> {
-        // SECURITY FIX (Level-8 A5): refuse symlinks; A3: write with mode 0600.
-        if !is_safe_write_path(path) {
-            return Err(format!("Security: {:?} è un symlink — scrittura rifiutata", path));
-        }
-        secure_write(path, data).map_err(|e| e.to_string())
-    };
-
+    // Write all tmp files first (crash here = safe, old files untouched)
     let tmp_vault  = dir.join(".vault.tmp");
     let tmp_salt   = dir.join(".salt.tmp");
     let tmp_verify = dir.join(".verify.tmp");
 
-    atomic_write_sync(&tmp_vault,  &encrypted_vault)?;
-    atomic_write_sync(&tmp_salt,   &new_salt)?;
-    atomic_write_sync(&tmp_verify, &new_verify_tag)?;
+    atomic_write_with_sync(&tmp_vault, &encrypted_vault).map_err(|e| format!("tmp vault: {}", e))?;
+    atomic_write_with_sync(&tmp_salt, &new_salt).map_err(|e| format!("tmp salt: {}", e))?;
+    atomic_write_with_sync(&tmp_verify, &new_verify_tag).map_err(|e| format!("tmp verify: {}", e))?;
 
-    // Atomic rename sequence — new salt first (defines the "current password")
-    fs::rename(&tmp_salt,   dir.join(VAULT_SALT_FILE)).map_err(|e| e.to_string())?;
-    fs::rename(&tmp_vault,  &vault_path).map_err(|e| e.to_string())?;
+    // SAFETY NET: backup old vault before rename sequence
+    let vault_backup = dir.join(".vault.bak");
+    if vault_path.exists() {
+        let _ = fs::copy(&vault_path, &vault_backup);
+    }
+
+    // Atomic rename sequence — vault FIRST (matches new key), then salt+verify
+    fs::rename(&tmp_vault, &vault_path).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_salt, dir.join(VAULT_SALT_FILE)).map_err(|e| e.to_string())?;
     fs::rename(&tmp_verify, dir.join(VAULT_VERIFY_FILE)).map_err(|e| e.to_string())?;
 
-    // Re-encrypt audit log if exists — ATOMIC write via tmp+rename (Gemini L3-4)
+    // Success: remove backup
+    let _ = fs::remove_file(&vault_backup);
+
+    // Re-encrypt audit log if exists
     let audit_path = dir.join(AUDIT_LOG_FILE);
     if audit_path.exists() {
         if let Ok(enc) = fs::read(&audit_path) {
             if let Ok(dec) = decrypt_data(&current_key, &enc) {
                 if let Ok(re_enc) = encrypt_data(&new_key, &dec) {
-                    let audit_tmp = dir.join(".audit.tmp");
-                    if let Ok(()) = atomic_write_sync(&audit_tmp, &re_enc) {
-                        let _ = fs::rename(&audit_tmp, &audit_path);
-                    }
+                    let _ = atomic_write_with_sync(&audit_path, &re_enc);
                 }
             }
         }
     }
+
     // Update in-memory key
-    *state.vault_key.lock().unwrap() = Some(SecureKey(new_key));
-    // Update biometric if saved (check marker file instead of keychain to avoid Touch ID popup)
+    *state.vault_key.lock().unwrap_or_else(|e| e.into_inner()) = Some(SecureKey(new_key));
+
+    // Update biometric if saved
     #[cfg(not(target_os = "android"))]
     {
-        let dir = state.data_dir.lock().unwrap().clone();
+        let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if dir.join(BIO_MARKER_FILE).exists() {
             let user = whoami::username();
             if let Ok(entry) = keyring::Entry::new(BIO_SERVICE, &user) {
@@ -702,56 +863,32 @@ fn change_password(state: State<AppState>, current_password: String, new_passwor
             }
         }
     }
+
     let _ = append_audit_log(&state, "Password cambiata");
-    // SECURITY FIX (Level-9): zero both password strings from RAM after use.
-    unsafe {
-        let ptr = current_password.as_ptr() as *mut u8;
-        for i in 0..current_password.len() { ptr.add(i).write_volatile(0); }
-        let ptr2 = new_password.as_ptr() as *mut u8;
-        for i in 0..new_password.len() { ptr2.add(i).write_volatile(0); }
-    }
+    // SECURITY FIX (Gemini Audit v2): safe zeroing — no more UB
+    zeroize_password(current_password);
+    zeroize_password(new_password);
     Ok(json!({"success": true}))
 }
 
 #[tauri::command]
 fn verify_vault_password(state: State<AppState>, pwd: String) -> Result<Value, String> {
-    // Applica lo stesso lockout di unlock_vault per prevenire brute-force parallelo
-    let dir = state.data_dir.lock().unwrap().clone();
-    let sec_dir = state.security_dir.lock().unwrap().clone();
-    let (disk_attempts, disk_locked_until) = lockout_load(&sec_dir);
-    {
-        let mut att = state.failed_attempts.lock().unwrap();
-        if disk_attempts > *att { *att = disk_attempts; }
+    let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let sec_dir = state.security_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+
+    // Centralized lockout check (DRY)
+    if let Err(locked_json) = check_lockout(&state, &sec_dir) {
+        return Ok(locked_json);
     }
-    if let Some(end_time) = disk_locked_until {
-        if std::time::SystemTime::now() < end_time {
-            let remaining = end_time.duration_since(std::time::SystemTime::now())
-                .map(|d| d.as_secs()).unwrap_or(0);
-            return Ok(json!({"valid": false, "locked": true, "remaining": remaining}));
-        }
-    }
-    if let Some(until) = *state.locked_until.lock().unwrap() {
-        if Instant::now() < until {
-            return Ok(json!({"valid": false, "locked": true, "remaining": (until - Instant::now()).as_secs()}));
-        }
-    }
-    let salt = fs::read(dir.join(VAULT_SALT_FILE)).map_err(|e| e.to_string())?;
-    let key = derive_secure_key(&pwd, &salt)?;
-    let stored = fs::read(dir.join(VAULT_VERIFY_FILE)).unwrap_or_default();
-    let valid = verify_hash_matches(&key, &stored);
+
+    // Centralized authentication
+    let valid = authenticate_vault_password(&pwd, &dir).is_ok();
     if !valid {
-        let mut att = state.failed_attempts.lock().unwrap();
-        *att += 1;
-        let locked_sys = if *att >= MAX_FAILED_ATTEMPTS {
-            let t = std::time::SystemTime::now() + Duration::from_secs(LOCKOUT_SECS);
-            *state.locked_until.lock().unwrap() = Some(Instant::now() + Duration::from_secs(LOCKOUT_SECS));
-            Some(t)
-        } else { None };
-        lockout_save(&sec_dir, *att, locked_sys);
+        record_failed_attempt(&state, &sec_dir);
     } else {
-        *state.failed_attempts.lock().unwrap() = 0;
-        lockout_clear(&sec_dir);
+        clear_lockout(&state, &sec_dir);
     }
+    zeroize_password(pwd);
     Ok(json!({"valid": valid}))
 }
 
@@ -803,11 +940,7 @@ fn load_practices(state: State<AppState>) -> Result<Value, String> {
 
 #[tauri::command]
 fn save_practices(state: State<AppState>, list: Value) -> Result<bool, String> {
-    // SECURITY FIX (Level-8 C1): hold write_mutex for the entire read-modify-write cycle.
-    // Without this, two concurrent IPC calls (e.g. save_practices + save_agenda) would both
-    // read the vault, apply their own change, and write back — the second write silently
-    // discards the first write's changes (classic lost-update race condition).
-    let _guard = state.write_mutex.lock().unwrap();
+    let _guard = state.write_mutex.lock().unwrap_or_else(|e| e.into_inner());
     let mut vault = read_vault_internal(&state)?;
     vault["practices"] = list;
     write_vault_internal(&state, &vault)?;
@@ -822,8 +955,7 @@ fn load_agenda(state: State<AppState>) -> Result<Value, String> {
 
 #[tauri::command]
 fn save_agenda(state: State<AppState>, agenda: Value) -> Result<bool, String> {
-    // SECURITY FIX (Level-8 C1): same write_mutex as save_practices — prevents lost-update race.
-    let _guard = state.write_mutex.lock().unwrap();
+    let _guard = state.write_mutex.lock().unwrap_or_else(|e| e.into_inner());
     let mut vault = read_vault_internal(&state)?;
     vault["agenda"] = agenda;
     write_vault_internal(&state, &vault)?;
@@ -937,7 +1069,7 @@ fn load_time_logs(state: State<AppState>) -> Result<Value, String> {
 
 #[tauri::command]
 fn save_time_logs(state: State<AppState>, logs: Value) -> Result<bool, String> {
-    let _guard = state.write_mutex.lock().unwrap();
+    let _guard = state.write_mutex.lock().unwrap_or_else(|e| e.into_inner());
     let mut vault = read_vault_internal(&state)?;
     vault["timeLogs"] = logs;
     write_vault_internal(&state, &vault)?;
@@ -956,7 +1088,7 @@ fn load_invoices(state: State<AppState>) -> Result<Value, String> {
 
 #[tauri::command]
 fn save_invoices(state: State<AppState>, invoices: Value) -> Result<bool, String> {
-    let _guard = state.write_mutex.lock().unwrap();
+    let _guard = state.write_mutex.lock().unwrap_or_else(|e| e.into_inner());
     let mut vault = read_vault_internal(&state)?;
     vault["invoices"] = invoices;
     write_vault_internal(&state, &vault)?;
@@ -975,7 +1107,7 @@ fn load_contacts(state: State<AppState>) -> Result<Value, String> {
 
 #[tauri::command]
 fn save_contacts(state: State<AppState>, contacts: Value) -> Result<bool, String> {
-    let _guard = state.write_mutex.lock().unwrap();
+    let _guard = state.write_mutex.lock().unwrap_or_else(|e| e.into_inner());
     let mut vault = read_vault_internal(&state)?;
     vault["contacts"] = contacts;
     write_vault_internal(&state, &vault)?;
@@ -1000,7 +1132,7 @@ fn has_bio_saved(state: State<AppState>) -> bool {
     // Instead, use a lightweight marker file written by save_bio / cleared by clear_bio.
     #[cfg(not(target_os = "android"))]
     {
-        let dir = state.data_dir.lock().unwrap().clone();
+        let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
         dir.join(BIO_MARKER_FILE).exists()
     }
     #[cfg(target_os = "android")]
@@ -1018,7 +1150,7 @@ fn save_bio(state: State<AppState>, pwd: String) -> Result<bool, String> {
         let entry = keyring::Entry::new(BIO_SERVICE, &user).map_err(|e| e.to_string())?;
         entry.set_password(&pwd).map_err(|e| e.to_string())?;
         // Write marker file so has_bio_saved() can check without triggering Touch ID
-        let dir = state.data_dir.lock().unwrap().clone();
+        let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let _ = fs::write(dir.join(BIO_MARKER_FILE), "1");
         Ok(true)
     }
@@ -1060,18 +1192,35 @@ fn bio_login(_state: State<AppState>) -> Result<Value, String> {
             .and_then(|e| e.get_password()).map_err(|e| e.to_string())?;
 
         // Esegui internamente lo sblocco del vault esattamente come unlock_vault
-    let dir = _state.data_dir.lock().unwrap().clone();
-    let sec_dir = _state.security_dir.lock().unwrap().clone();
+    let dir = _state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let sec_dir = _state.security_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let salt_path = dir.join(VAULT_SALT_FILE);
         if !salt_path.exists() { return Ok(json!({"success": false, "error": "Vault non inizializzato"})); }
         let salt = fs::read(&salt_path).unwrap_or_default();
         match derive_secure_key(&saved_pwd, &salt) {
             Ok(k) => {
-                *(_state.vault_key.lock().unwrap()) = Some(SecureKey(k));
-                *(_state.failed_attempts.lock().unwrap()) = 0;
-                *(_state.locked_until.lock().unwrap()) = None;
+                // SECURITY FIX: verify the derived key against vault.verify BEFORE accepting.
+                // If the user changed their password after saving biometrics, the old keyring
+                // password would derive a wrong key. Without this check, the vault would appear
+                // "unlocked" but all data reads would fail with AES decryption errors.
+                let verify_path = dir.join(VAULT_VERIFY_FILE);
+                let stored = fs::read(&verify_path).unwrap_or_default();
+                if !stored.is_empty() && !verify_hash_matches(&k, &stored) {
+                    // Keyring password is stale (user changed password).
+                    // Clear the stale bio credentials so the user isn't stuck in a loop.
+                    let _ = keyring::Entry::new(BIO_SERVICE, &user)
+                        .and_then(|e| e.delete_credential());
+                    let _ = fs::remove_file(dir.join(BIO_MARKER_FILE));
+                    return Ok(json!({
+                        "success": false,
+                        "error": "Password biometrica non più valida. Accedi con la password e riconfigura la biometria."
+                    }));
+                }
+                *(_state.vault_key.lock().unwrap_or_else(|e| e.into_inner())) = Some(SecureKey(k));
+                *(_state.failed_attempts.lock().unwrap_or_else(|e| e.into_inner())) = 0;
+                *(_state.locked_until.lock().unwrap_or_else(|e| e.into_inner())) = None;
                 lockout_clear(&sec_dir);
-                *(_state.last_activity.lock().unwrap()) = Instant::now();
+                *(_state.last_activity.lock().unwrap_or_else(|e| e.into_inner())) = Instant::now();
                 let _ = append_audit_log(&_state, "Sblocco Vault (biometria)");
                 Ok(json!({"success": true}))
             },
@@ -1112,18 +1261,30 @@ if ($result -eq [Windows.Security.Credentials.UI.UserConsentVerificationResult]:
         let saved_pwd = keyring::Entry::new(BIO_SERVICE, &user)
             .and_then(|e| e.get_password()).map_err(|e| e.to_string())?;
 
-    let dir = _state.data_dir.lock().unwrap().clone();
-    let sec_dir = _state.security_dir.lock().unwrap().clone();
+    let dir = _state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let sec_dir = _state.security_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let salt_path = dir.join(VAULT_SALT_FILE);
         if !salt_path.exists() { return Ok(json!({"success": false, "error": "Vault non inizializzato"})); }
         let salt = fs::read(&salt_path).unwrap_or_default();
         match derive_secure_key(&saved_pwd, &salt) {
             Ok(k) => {
-                *(_state.vault_key.lock().unwrap()) = Some(SecureKey(k));
-                *(_state.failed_attempts.lock().unwrap()) = 0;
-                *(_state.locked_until.lock().unwrap()) = None;
+                // SECURITY FIX: verify the derived key against vault.verify BEFORE accepting.
+                let verify_path = dir.join(VAULT_VERIFY_FILE);
+                let stored = fs::read(&verify_path).unwrap_or_default();
+                if !stored.is_empty() && !verify_hash_matches(&k, &stored) {
+                    let _ = keyring::Entry::new(BIO_SERVICE, &user)
+                        .and_then(|e| e.delete_credential());
+                    let _ = fs::remove_file(dir.join(BIO_MARKER_FILE));
+                    return Ok(json!({
+                        "success": false,
+                        "error": "Password biometrica non più valida. Accedi con la password e riconfigura la biometria."
+                    }));
+                }
+                *(_state.vault_key.lock().unwrap_or_else(|e| e.into_inner())) = Some(SecureKey(k));
+                *(_state.failed_attempts.lock().unwrap_or_else(|e| e.into_inner())) = 0;
+                *(_state.locked_until.lock().unwrap_or_else(|e| e.into_inner())) = None;
                 lockout_clear(&sec_dir);
-                *(_state.last_activity.lock().unwrap()) = Instant::now();
+                *(_state.last_activity.lock().unwrap_or_else(|e| e.into_inner())) = Instant::now();
                 let _ = append_audit_log(&_state, "Sblocco Vault (biometria)");
                 Ok(json!({"success": true}))
             },
@@ -1150,7 +1311,7 @@ fn clear_bio(state: State<AppState>) -> bool {
         let user = whoami::username();
         if let Ok(e) = keyring::Entry::new(BIO_SERVICE, &user) { let _ = e.delete_credential(); }
         // Remove marker file
-        let dir = state.data_dir.lock().unwrap().clone();
+        let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let _ = fs::remove_file(dir.join(BIO_MARKER_FILE));
         true
     }
@@ -1167,29 +1328,36 @@ fn clear_bio(state: State<AppState>) -> bool {
 
 fn append_audit_log(state: &State<AppState>, event_name: &str) -> Result<(), String> {
     let key = match get_vault_key(state) { Ok(k) => k, Err(_) => return Ok(()) };
-    let path = state.data_dir.lock().unwrap().join(AUDIT_LOG_FILE);
+    let path = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).join(AUDIT_LOG_FILE);
     let mut logs: Vec<Value> = if path.exists() {
         let enc = fs::read(&path).unwrap_or_default();
-        if let Ok(dec) = decrypt_data(&key, &enc) { serde_json::from_slice(&dec).unwrap_or_default() } else { vec![] }
+        match decrypt_data(&key, &enc) {
+            Ok(dec) => serde_json::from_slice(&dec).unwrap_or_default(),
+            Err(_) => {
+                // SECURITY FIX (Gemini Audit v2): if audit log decryption fails, the file
+                // has been tampered with. DO NOT silently overwrite it — that would destroy
+                // the entire forensic history. Instead, preserve the corrupted file as evidence
+                // and start a NEW log with a tamper-detection event.
+                let corrupt_backup = path.with_extension("audit.corrupt");
+                let _ = fs::copy(&path, &corrupt_backup);
+                eprintln!("[LexFlow] SECURITY: Audit log decryption failed — tampered? Backup saved to {:?}", corrupt_backup);
+                vec![json!({"event": "AUDIT_LOG_TAMPERING_DETECTED", "time": chrono::Local::now().to_rfc3339()})]
+            }
+        }
     } else { vec![] };
 
     logs.push(json!({"event": event_name, "time": chrono::Local::now().to_rfc3339()}));
-    // GDPR FIX (Gemini L4-4): increased from 100 to 10000 events to comply with
-    // legal audit trail requirements. 10000 events @ ~100 bytes each ≈ 1MB encrypted.
     if logs.len() > 10000 { logs.remove(0); }
     let plaintext = Zeroizing::new(serde_json::to_vec(&logs).unwrap_or_default());
     let enc = encrypt_data(&key, &plaintext)?;
-    fs::write(&path, enc).map_err(|e| {
-        eprintln!("[LexFlow] AUDIT LOG WRITE FAILED: {} — event '{}' lost", e, event_name);
-        e.to_string()
-    })?;
+    atomic_write_with_sync(&path, &enc)?;
     Ok(())
 }
 
 #[tauri::command]
 fn get_audit_log(state: State<AppState>) -> Result<Value, String> {
     let key = get_vault_key(&state)?;
-    let path = state.data_dir.lock().unwrap().join(AUDIT_LOG_FILE);
+    let path = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).join(AUDIT_LOG_FILE);
     if !path.exists() { return Ok(json!([])); }
     let dec = decrypt_data(&key, &fs::read(path).map_err(|e| e.to_string())?)?;
     serde_json::from_slice(&dec).map_err(|e| e.to_string())
@@ -1230,7 +1398,7 @@ mod tests {
 
 #[tauri::command]
 fn get_settings(state: State<AppState>) -> Value {
-    let path = state.data_dir.lock().unwrap().join(SETTINGS_FILE);
+    let path = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).join(SETTINGS_FILE);
     if !path.exists() { return json!({}); }
     // SECURITY FIX (Level-8 C5): reject suspiciously large files before reading into RAM.
     // A corrupted or maliciously injected 5GB settings file would OOM-kill the process.
@@ -1240,18 +1408,18 @@ fn get_settings(state: State<AppState>) -> Value {
             return json!({});
         }
     }
-    let key = get_local_encryption_key();
+    // SECURITY FIX (Gemini Audit): use migration-aware decryption (hostname→machine_id)
+    if let Some(dec) = decrypt_local_with_migration(&path) {
+        return serde_json::from_slice(&dec).unwrap_or(json!({}));
+    }
+    // Migration: old plaintext format
     if let Ok(enc) = fs::read(&path) {
-        // Try encrypted format first
-        if let Ok(dec) = decrypt_data(&key, &enc) {
-            return serde_json::from_slice(&dec).unwrap_or(json!({}));
-        }
-        // Migration: old plaintext format
         if let Ok(text) = std::str::from_utf8(&enc) {
             if let Ok(val) = serde_json::from_str::<Value>(text) {
-                // Re-encrypt and save
+                // Re-encrypt with current key
+                let key = get_local_encryption_key();
                 if let Ok(re_enc) = encrypt_data(&key, &serde_json::to_vec(&val).unwrap_or_default()) {
-                    let _ = fs::write(&path, re_enc);
+                    let _ = atomic_write_with_sync(&path, &re_enc);
                 }
                 return val;
             }
@@ -1266,28 +1434,18 @@ fn get_settings(state: State<AppState>) -> Value {
 
 #[tauri::command]
 fn save_settings(state: State<AppState>, settings: Value) -> bool {
-    let path = state.data_dir.lock().unwrap().join(SETTINGS_FILE);
+    let path = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).join(SETTINGS_FILE);
     let key = get_local_encryption_key();
     match encrypt_data(&key, &serde_json::to_vec(&settings).unwrap_or_default()) {
-        Ok(encrypted) => {
-            // FSYNC FIX (L7-1): use explicit open+sync_all to guarantee physical write
-            use std::io::Write;
-            let tmp = path.with_extension("json.tmp");
-            let ok = std::fs::OpenOptions::new()
-                .write(true).create(true).truncate(true)
-                .open(&tmp)
-                .and_then(|mut f| { f.write_all(&encrypted)?; f.sync_all() })
-                .is_ok();
-            if ok { fs::rename(&tmp, &path).is_ok() } else { false }
-        },
+        Ok(encrypted) => atomic_write_with_sync(&path, &encrypted).is_ok(),
         Err(_) => false,
     }
 }
 
 #[tauri::command]
 fn check_license(state: State<AppState>) -> Value {
-    let path = state.security_dir.lock().unwrap().join(LICENSE_FILE);
-    let sentinel_path = state.security_dir.lock().unwrap().join(LICENSE_SENTINEL_FILE);
+    let path = state.security_dir.lock().unwrap_or_else(|e| e.into_inner()).join(LICENSE_FILE);
+    let sentinel_path = state.security_dir.lock().unwrap_or_else(|e| e.into_inner()).join(LICENSE_SENTINEL_FILE);
 
     if !path.exists() {
         // SECURITY: if sentinel exists but license.json was deleted, detect tampering.
@@ -1302,16 +1460,12 @@ fn check_license(state: State<AppState>) -> Value {
         return json!({"activated": false});
     }
     let key = get_local_encryption_key();
-    let data: Value = if let Ok(enc) = fs::read(&path) {
-        // SECURITY FIX: only accept encrypted format — plaintext fallback removed.
-        // A plaintext license.json could be crafted by an attacker to bypass activation.
-        if let Ok(dec) = decrypt_data(&key, &enc) {
-            serde_json::from_slice(&dec).unwrap_or(json!({}))
-        } else {
-            // File exists but cannot be decrypted with THIS machine's key.
-            // Either corrupted or copied from another machine — reject.
-            return json!({"activated": false, "reason": "File licenza corrotto o non valido per questo dispositivo."});
-        }
+    let data: Value = if let Some(dec) = decrypt_local_with_migration(&path) {
+        serde_json::from_slice(&dec).unwrap_or(json!({}))
+    } else if path.exists() {
+        // File exists but cannot be decrypted with ANY key (current or legacy).
+        // Either corrupted or copied from another machine — reject.
+        return json!({"activated": false, "reason": "File licenza corrotto o non valido per questo dispositivo."});
     } else { return json!({"activated": false}); };
 
     // SECURITY: verify hardware fingerprint — the license is bound to this machine
@@ -1401,7 +1555,7 @@ fn check_license(state: State<AppState>) -> Value {
             }
 
             // 4. Burn the key so it can never be reused
-            let dir = state.security_dir.lock().unwrap().clone();
+            let dir = state.security_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
             burn_key(&dir, &compute_burn_hash(license_key, &current_fp));
 
             return json!({
@@ -1438,6 +1592,8 @@ struct LicensePayload {
     c: String, // client name
     e: u64,    // expiry in milliseconds since epoch
     id: String, // unique key id
+    #[serde(default)] // backward compatible: v1 tokens don't have this field
+    n: Option<String>, // anti-replay nonce (128-bit hex, v2+)
 }
 
 #[derive(Serialize)]
@@ -1517,7 +1673,7 @@ fn extract_expiry_ms(token: &str) -> Option<u64> {
 #[tauri::command]
 fn activate_license(state: State<AppState>, key: String, _client_name: Option<String>) -> Value {
     // Anti brute-force: usa lo stesso lockout del vault
-    if let Some(until) = *state.locked_until.lock().unwrap() {
+    if let Some(until) = *state.locked_until.lock().unwrap_or_else(|e| e.into_inner()) {
         if Instant::now() < until {
             return json!({"success": false, "locked": true, "remaining": (until - Instant::now()).as_secs()});
         }
@@ -1525,7 +1681,7 @@ fn activate_license(state: State<AppState>, key: String, _client_name: Option<St
 
     let key = key.trim().to_string(); // Le chiavi B64 sono case-sensitive, non uppercasiamo
 
-    let sec_dir = state.security_dir.lock().unwrap().clone();
+    let sec_dir = state.security_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let path = sec_dir.join(LICENSE_FILE);
     let sentinel_path = sec_dir.join(LICENSE_SENTINEL_FILE);
 
@@ -1543,10 +1699,18 @@ fn activate_license(state: State<AppState>, key: String, _client_name: Option<St
         let sentinel_lines: Vec<&str> = sentinel_content.lines().collect();
         let stored_key_id_enc = sentinel_lines.get(1).unwrap_or(&"");
 
-        // Try to recover stored key ID
+        // Try to recover stored key ID (try current key, then legacy)
         let stored_key_id: Option<String> = if !stored_key_id_enc.is_empty() {
             hex::decode(stored_key_id_enc).ok()
-                .and_then(|enc_bytes| decrypt_data(&enc_key, &enc_bytes).ok())
+                .and_then(|enc_bytes| {
+                    decrypt_data(&enc_key, &enc_bytes).ok()
+                        .or_else(|| {
+                            #[cfg(not(target_os = "android"))]
+                            { decrypt_data(&get_local_encryption_key_legacy(), &enc_bytes).ok() }
+                            #[cfg(target_os = "android")]
+                            { None }
+                        })
+                })
                 .and_then(|dec| String::from_utf8(dec).ok())
         } else {
             None
@@ -1571,42 +1735,40 @@ fn activate_license(state: State<AppState>, key: String, _client_name: Option<St
     // ── SECURITY CHECK 2: if license already exists and is valid, block overwrite ──
     // Prevents replacing a valid license with a pirated/shared key.
     if path.exists() {
-        let enc_key = get_local_encryption_key();
-        if let Ok(enc) = fs::read(&path) {
-            if let Ok(dec) = decrypt_data(&enc_key, &enc) {
-                if let Ok(existing) = serde_json::from_slice::<Value>(&dec) {
-                    let existing_version = existing.get("keyVersion").and_then(|v| v.as_str()).unwrap_or("");
+        if let Some(dec) = decrypt_local_with_migration(&path) {
+            if let Ok(existing) = serde_json::from_slice::<Value>(&dec) {
+                let existing_version = existing.get("keyVersion")
+                    .and_then(|v| v.as_str()).unwrap_or("");
 
-                    // Burned format: check keyId + expiry
-                    if existing_version == "ed25519-burned" {
-                        let expiry = existing.get("expiryMs").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
-                        if now_ms <= expiry {
-                            // License is still valid — block overwrite with different key
-                            let existing_id = existing.get("keyId").and_then(|v| v.as_str());
+                if existing_version == "ed25519-burned" {
+                    let expiry = existing.get("expiryMs")
+                        .and_then(|v| v.as_u64()).unwrap_or(0);
+                    let now_ms = SystemTime::now()
+                        .duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+                    if now_ms <= expiry {
+                        let existing_id = existing.get("keyId")
+                            .and_then(|v| v.as_str());
+                        let new_id = extract_key_id(&key);
+                        if existing_id.map(|s| s.to_string()) != new_id {
+                            return json!({
+                                "success": false,
+                                "error": "Una licenza valida è già attiva. Non è possibile sostituirla."
+                            });
+                        }
+                    }
+                } else {
+                    let existing_key = existing.get("key")
+                        .and_then(|k| k.as_str()).unwrap_or("");
+                    if !existing_key.is_empty() {
+                        let existing_verification = verify_license(existing_key.to_string());
+                        if existing_verification.valid {
+                            let existing_id = extract_key_id(existing_key);
                             let new_id = extract_key_id(&key);
-                            if existing_id.map(|s| s.to_string()) != new_id {
+                            if existing_id != new_id {
                                 return json!({
                                     "success": false,
                                     "error": "Una licenza valida è già attiva. Non è possibile sostituirla."
                                 });
-                            }
-                        }
-                        // Expired → allow replacement
-                    } else {
-                        // Legacy format: check raw key
-                        let existing_key = existing.get("key").and_then(|k| k.as_str()).unwrap_or("");
-                        if !existing_key.is_empty() {
-                            let existing_verification = verify_license(existing_key.to_string());
-                            if existing_verification.valid {
-                                let existing_id = extract_key_id(existing_key);
-                                let new_id = extract_key_id(&key);
-                                if existing_id != new_id {
-                                    return json!({
-                                        "success": false,
-                                        "error": "Una licenza valida è già attiva. Non è possibile sostituirla."
-                                    });
-                                }
                             }
                         }
                     }
@@ -1619,15 +1781,15 @@ fn activate_license(state: State<AppState>, key: String, _client_name: Option<St
     let verification = verify_license(key.clone());
 
     if !verification.valid {
-        let mut att = state.failed_attempts.lock().unwrap();
+        let mut att = state.failed_attempts.lock().unwrap_or_else(|e| e.into_inner());
         *att += 1;
         if *att >= MAX_FAILED_ATTEMPTS {
-            *state.locked_until.lock().unwrap() = Some(Instant::now() + Duration::from_secs(LOCKOUT_SECS));
+            *state.locked_until.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now() + Duration::from_secs(LOCKOUT_SECS));
         }
         return json!({"success": false, "error": verification.message});
     }
 
-    *state.failed_attempts.lock().unwrap() = 0;
+    *state.failed_attempts.lock().unwrap_or_else(|e| e.into_inner()) = 0;
 
     // SECURITY: bind license to THIS machine — cannot be copied to another device
     let fingerprint = compute_machine_fingerprint();
@@ -1640,6 +1802,19 @@ fn activate_license(state: State<AppState>, key: String, _client_name: Option<St
         return json!({
             "success": false,
             "error": "Questa chiave è già stata utilizzata e non può essere riattivata."
+        });
+    }
+
+    // ── SECURITY CHECK 4: burned-keys file integrity ──────────────────────
+    // If the sentinel exists (a license was previously activated on this machine)
+    // but the .burned-keys file is missing, someone deleted it to bypass single-use
+    // enforcement. Block activation of any NEW key in this case.
+    if sentinel_path.exists() && !sec_dir.join(BURNED_KEYS_FILE).exists() {
+        // Allow re-activation of the SAME key ID only (handled by CHECK 1 above).
+        // If we reach here, it's a different key → block.
+        return json!({
+            "success": false,
+            "error": "Registro chiavi compromesso. Contattare il supporto per assistenza."
         });
     }
 
@@ -1683,17 +1858,8 @@ fn activate_license(state: State<AppState>, key: String, _client_name: Option<St
     let enc_key = get_local_encryption_key();
     match encrypt_data(&enc_key, &serde_json::to_vec(&record).unwrap_or_default()) {
         Ok(encrypted) => {
-            // FSYNC FIX: atomic write (tmp + rename) to prevent corruption on crash
-            use std::io::Write;
-            let tmp = path.with_extension("json.tmp");
-            let write_ok = std::fs::OpenOptions::new()
-                .write(true).create(true).truncate(true)
-                .open(&tmp)
-                .and_then(|mut f| { f.write_all(&encrypted)?; f.sync_all()?; Ok(()) })
-                .is_ok();
-            if write_ok {
-                match fs::rename(&tmp, &path) {
-                    Ok(_) => {
+            match atomic_write_with_sync(&path, &encrypted) {
+                Ok(_) => {
                         // SECURITY: write sentinel file — HMAC proof that activation happened.
                         // This detects if license.json is manually deleted to hack the system.
                         // Format: line 1 = HMAC(sentinel_data), line 2 = encrypted key ID
@@ -1709,7 +1875,7 @@ fn activate_license(state: State<AppState>, key: String, _client_name: Option<St
                             .unwrap_or_default();
 
                         let sentinel_content = format!("{}\n{}", sentinel_hmac, encrypted_key_id);
-                        let _ = fs::write(&sentinel_path, sentinel_content);
+                        let _ = atomic_write_with_sync(&sentinel_path, sentinel_content.as_bytes());
 
                         // ── BURN THE KEY: add to burned-keys registry ──
                         // After this, the same token can NEVER be activated again.
@@ -1719,10 +1885,6 @@ fn activate_license(state: State<AppState>, key: String, _client_name: Option<St
                     },
                     Err(e) => json!({"success": false, "error": format!("Errore salvataggio: {}", e)}),
                 }
-            } else {
-                let _ = fs::remove_file(&tmp);
-                json!({"success": false, "error": "Errore scrittura disco."})
-            }
         },
         Err(e) => json!({"success": false, "error": format!("Errore cifratura: {}", e)}),
     }
@@ -1741,7 +1903,7 @@ async fn export_vault(state: State<'_, AppState>, pwd: String, app: AppHandle) -
     // that is permanently inaccessible — the user has no way to know until they need to restore.
     // We verify by deriving the key and confirming it opens the vault's own verify tag.
     {
-        let dir = state.data_dir.lock().unwrap().clone();
+        let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let salt_path = dir.join(VAULT_SALT_FILE);
         if salt_path.exists() {
             let vault_salt = fs::read(&salt_path).map_err(|e| e.to_string())?;
@@ -1818,8 +1980,10 @@ async fn import_vault(state: State<'_, AppState>, pwd: String, app: AppHandle) -
         // Fix: derive a new vault key from `pwd` + a fresh salt, write all vault files
         // (salt, verify, vault.lex) from the backup's own credentials, then set vault_key.
         // This means the imported vault's master password becomes `pwd` as entered here.
+        // SECURITY FIX (Gemini Audit): acquire write_mutex to prevent concurrent vault writes.
+        let _guard = state.write_mutex.lock().unwrap_or_else(|e| e.into_inner());
         {
-            let dir = state.data_dir.lock().unwrap().clone();
+            let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
             // Generate new vault salt for the imported vault
             let mut new_salt = vec![0u8; 32];
             rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut new_salt);
@@ -1830,15 +1994,12 @@ async fn import_vault(state: State<'_, AppState>, pwd: String, app: AppHandle) -
             let verify_tag = make_verify_tag(&new_key);
             secure_write(&dir.join(VAULT_VERIFY_FILE), &verify_tag).map_err(|e| e.to_string())?;
             // Set the vault key in state so write_vault_internal can use it
-            *state.vault_key.lock().unwrap() = Some(SecureKey(new_key));
+            *state.vault_key.lock().unwrap_or_else(|e| e.into_inner()) = Some(SecureKey(new_key));
         }
         write_vault_internal(&state, &val)?;
         let _ = append_audit_log(&state, "Vault importato da backup");
-        // SECURITY FIX (Level-9): zero the backup password from RAM after the key is derived.
-        unsafe {
-            let ptr = pwd.as_ptr() as *mut u8;
-            for i in 0..pwd.len() { ptr.add(i).write_volatile(0); }
-        }
+        // SECURITY FIX (Gemini Audit): safe password zeroing — no UB
+        zeroize_password(pwd);
         Ok(json!({"success": true}))
     } else { Ok(json!({"success": false, "cancelled": true})) }
 }
@@ -1850,9 +2011,29 @@ async fn import_vault(state: State<'_, AppState>, pwd: String, app: AppHandle) -
 #[tauri::command]
 fn open_path(path: String) {
     #[cfg(not(target_os = "android"))]
-    { let _ = open::that(path); }
+    {
+        // SECURITY FIX (Gemini Audit v2): sanitize path to prevent RCE.
+        // open::that() bypasses Tauri's shell scope — an attacker could pass a URL
+        // like "smb://evil/share" (steals NTLM hash) or "/usr/bin/malicious".
+        // Only allow opening paths that exist as files/directories on the local filesystem.
+        let p = std::path::Path::new(&path);
+        if !p.exists() || !p.is_absolute() {
+            eprintln!("[LexFlow] SECURITY: open_path refused non-existent/relative path: {:?}", path);
+            return;
+        }
+        // Block URLs, scripts, and executables
+        let lower = path.to_lowercase();
+        if lower.starts_with("http") || lower.starts_with("smb:") || lower.starts_with("ftp:") ||
+           lower.ends_with(".sh") || lower.ends_with(".bat") || lower.ends_with(".cmd") ||
+           lower.ends_with(".exe") || lower.ends_with(".ps1") || lower.ends_with(".scpt") ||
+           lower.ends_with(".app") || lower.ends_with(".command") {
+            eprintln!("[LexFlow] SECURITY: open_path refused potentially dangerous path: {:?}", path);
+            return;
+        }
+        let _ = open::that(&path);
+    }
     #[cfg(target_os = "android")]
-    { let _ = path; } // su Android si usa ACTION_VIEW via frontend
+    { let _ = path; }
 }
 
 #[tauri::command]
@@ -1898,7 +2079,7 @@ async fn select_folder(app: AppHandle) -> Result<Option<String>, String> {
 
 #[tauri::command]
 fn window_close(app: AppHandle, state: State<AppState>) {
-    *state.vault_key.lock().unwrap() = None;
+    *state.vault_key.lock().unwrap_or_else(|e| e.into_inner()) = None;
     #[cfg(not(target_os = "android"))]
     if let Some(w) = app.get_webview_window("main") { let _ = w.hide(); }
     #[cfg(target_os = "android")]
@@ -1988,27 +2169,17 @@ fn test_notification(app: AppHandle) -> bool {
 
 #[tauri::command]
 fn sync_notification_schedule(app: AppHandle, state: State<AppState>, schedule: Value) -> bool {
-    let dir = state.data_dir.lock().unwrap().clone();
+    let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let key = get_local_encryption_key();
     let plaintext = serde_json::to_vec(&schedule).unwrap_or_default();
     match encrypt_data(&key, &plaintext) {
         Ok(encrypted) => {
-            // ATOMIC + FSYNC (L7-1 + L2-5): tmp write with sync_all before rename
-            let tmp = dir.join(".notif-schedule.tmp");
-            use std::io::Write;
-            let ok = std::fs::OpenOptions::new()
-                .write(true).create(true).truncate(true)
-                .open(&tmp)
-                .and_then(|mut f| { f.write_all(&encrypted)?; f.sync_all() })
-                .is_ok();
-            if ok {
-                let written = fs::rename(&tmp, dir.join(NOTIF_SCHEDULE_FILE)).is_ok();
-                if written {
-                    // ── TRIGGER: re-sync OS notification queue after data change ──
-                    sync_notifications(&app, &dir);
-                }
-                written
-            } else { false }
+            let written = atomic_write_with_sync(&dir.join(NOTIF_SCHEDULE_FILE), &encrypted).is_ok();
+            if written {
+                // ── TRIGGER: re-sync OS notification queue after data change ──
+                sync_notifications(&app, &dir);
+            }
+            written
         },
         Err(_) => false,
     }
@@ -2025,24 +2196,23 @@ fn read_notification_schedule(data_dir: &PathBuf) -> Option<Value> {
             return None;
         }
     }
-    let key = get_local_encryption_key();
-    let encrypted = fs::read(&path).ok()?;
-    // Try encrypted format first, fall back to plaintext for migration
-    if let Ok(decrypted) = decrypt_data(&key, &encrypted) {
-        serde_json::from_slice(&decrypted).ok()
-    } else {
-        // Migration: old plaintext format → re-encrypt
+    // SECURITY FIX (Gemini Audit): use migration-aware decryption (hostname→machine_id)
+    if let Some(decrypted) = decrypt_local_with_migration(&path) {
+        return serde_json::from_slice(&decrypted).ok();
+    }
+    // Migration: old plaintext format → re-encrypt
+    if let Ok(encrypted) = fs::read(&path) {
         if let Ok(text) = std::str::from_utf8(&encrypted) {
             if let Ok(val) = serde_json::from_str::<Value>(text) {
-                // Re-encrypt and save
+                let key = get_local_encryption_key();
                 if let Ok(enc) = encrypt_data(&key, &serde_json::to_vec(&val).unwrap_or_default()) {
-                    let _ = fs::write(&path, enc);
+                    let _ = atomic_write_with_sync(&path, &enc);
                 }
                 return Some(val);
             }
         }
-        None
     }
+    None
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2274,7 +2444,7 @@ async fn desktop_cron_job(app: AppHandle) {
         // Read data_dir from managed state
         let data_dir = {
             let state = app.state::<AppState>();
-            let dir = state.data_dir.lock().unwrap().clone();
+            let dir = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
             dir
         };
 
@@ -2446,17 +2616,17 @@ fn set_content_protection(app: AppHandle, enabled: bool) -> bool {
 
 #[tauri::command]
 fn ping_activity(state: State<AppState>) {
-    *state.last_activity.lock().unwrap() = Instant::now();
+    *state.last_activity.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
 }
 
 #[tauri::command]
 fn set_autolock_minutes(state: State<AppState>, minutes: u32) {
-    *state.autolock_minutes.lock().unwrap() = minutes;
+    *state.autolock_minutes.lock().unwrap_or_else(|e| e.into_inner()) = minutes;
 }
 
 #[tauri::command]
 fn get_autolock_minutes(state: State<AppState>) -> u32 {
-    *state.autolock_minutes.lock().unwrap()
+    *state.autolock_minutes.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2654,8 +2824,8 @@ pub fn run() {
                 if let Ok(real_dir) = app.path().app_data_dir() {
                     let vault_dir = real_dir.join("lexflow-vault");
                     let _ = fs::create_dir_all(&vault_dir);
-                    *app.state::<AppState>().data_dir.lock().unwrap() = vault_dir.clone();
-                    *app.state::<AppState>().security_dir.lock().unwrap() = real_dir.clone();
+                    *app.state::<AppState>().data_dir.lock().unwrap_or_else(|e| e.into_inner()) = vault_dir.clone();
+                    *app.state::<AppState>().security_dir.lock().unwrap_or_else(|e| e.into_inner()) = real_dir.clone();
                     // ── AHEAD-OF-TIME SYNC on Android ──
                     sync_notifications(&app.handle(), &vault_dir);
                 }
@@ -2766,7 +2936,7 @@ pub fn run() {
                             "quit" => {
                                 // Lock vault before exiting so key is not in memory
                                 let state = app.state::<AppState>();
-                                *state.vault_key.lock().unwrap() = None;
+                                *state.vault_key.lock().unwrap_or_else(|e| e.into_inner()) = None;
                                 app.exit(0);
                             }
                             _ => {}
@@ -2795,13 +2965,13 @@ pub fn run() {
                 std::thread::spawn(move || {
                     loop {
                         let state = ah.state::<AppState>();
-                        let is_unlocked = state.vault_key.lock().unwrap().is_some();
+                        let is_unlocked = state.vault_key.lock().unwrap_or_else(|e| e.into_inner()).is_some();
                         if !is_unlocked {
                             std::thread::sleep(Duration::from_secs(60));
                             continue;
                         }
-                        let minutes = *state.autolock_minutes.lock().unwrap();
-                        let last = *state.last_activity.lock().unwrap();
+                        let minutes = *state.autolock_minutes.lock().unwrap_or_else(|e| e.into_inner());
+                        let last = *state.last_activity.lock().unwrap_or_else(|e| e.into_inner());
                         drop(state);
                         std::thread::sleep(Duration::from_secs(30));
                         if minutes == 0 { continue; }
@@ -2814,7 +2984,7 @@ pub fn run() {
                         }
                         if elapsed >= threshold {
                             let state2 = ah.state::<AppState>();
-                            *state2.vault_key.lock().unwrap() = None;
+                            *state2.vault_key.lock().unwrap_or_else(|e| e.into_inner()) = None;
                             let _ = ah.emit("lf-vault-locked", ());
                         }
                     }

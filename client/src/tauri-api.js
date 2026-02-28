@@ -1,11 +1,22 @@
 /* LexFlow — Tauri API Bridge (auto-generated) */
-const { invoke } = window.__TAURI__?.core ?? { invoke: null };
-const { listen } = window.__TAURI__?.event ?? { listen: null };
+// SECURITY FIX (Gemini Audit): use ES module imports instead of window.__TAURI__ global.
+// withGlobalTauri=false prevents XSS from accessing invoke() via the global namespace.
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import {
+  isPermissionGranted as notifPermGranted,
+  requestPermission as notifReqPerm,
+  sendNotification as notifSend
+} from '@tauri-apps/plugin-notification';
 
 function safeInvoke(cmd, args = {}) {
-  if (!invoke) return Promise.reject(new Error(`Tauri invoke not available: ${cmd}`));
   return invoke(cmd, args).catch(err => {
-    console.error(`[LexFlow] ${cmd} failed:`, err);
+    // SECURITY FIX: sanitize error output in production — no stack traces or internal details
+    if (import.meta.env.PROD) {
+      console.warn(`[LexFlow] Command failed: ${cmd}`);
+    } else {
+      console.error(`[LexFlow] ${cmd} failed:`, err);
+    }
     throw typeof err === 'string' ? new Error(err) : err;
   });
 }
@@ -34,30 +45,17 @@ window.api = {
   checkBio: () => safeInvoke('check_bio'),
   hasBioSaved: () => safeInvoke('has_bio_saved'),
   saveBio: (pwd) => safeInvoke('save_bio', { pwd }),
-  // Normalize different possible Rust responses for `bio_login`:
-  // - legacy: returns the password string
-  // - safer approach: returns { success: true } and does the unlock in Rust
-  // - or returns { password: '<pwd>' } / { pwd: '<pwd>' }
-  // We return either: string (the password), { success: true } (backend unlocked), or null
+  // SECURITY FIX (Gemini Audit): bio_login returns {success: true} — password never reaches JS.
+  // Legacy password paths removed to prevent accidental password leakage to frontend.
   bioLogin: () => safeInvoke('bio_login').then((res) => {
     if (!res) return null;
-    if (typeof res === 'string') return res;
-    if (typeof res === 'object') {
-      if (res.password) return res.password;
-      if (res.pwd) return res.pwd;
-      if (res.success) return { success: true };
-    }
+    if (typeof res === 'object' && res.success) return { success: true };
     return null;
   }),
   // legacy alias used in some components
   loginBio: () => safeInvoke('bio_login').then((res) => {
     if (!res) return null;
-    if (typeof res === 'string') return res;
-    if (typeof res === 'object') {
-      if (res.password) return res.password;
-      if (res.pwd) return res.pwd;
-      if (res.success) return { success: true };
-    }
+    if (typeof res === 'object' && res.success) return { success: true };
     return null;
   }),
   clearBio: () => safeInvoke('clear_bio'),
@@ -123,26 +121,22 @@ window.api = {
 
   // Listeners — return an unsubscribe function (Promise-based: no race condition)
   onBlur: (cb) => {
-    if (!listen) return () => {};
     const unlistenPromise = listen('lf-blur', event => {
       cb(event.payload === true || event.payload === undefined);
     }).catch(() => null);
     return () => { unlistenPromise.then(fn => fn && fn()); };
   },
   onLock: (cb) => {
-    if (!listen) return () => {};
     const unlistenPromise = listen('lf-lock', () => cb()).catch(() => null);
     return () => { unlistenPromise.then(fn => fn && fn()); };
   },
   onVaultLocked: (cb) => {
-    if (!listen) return () => {};
     const unlistenPromise = listen('lf-vault-locked', () => cb()).catch(() => null);
     return () => { unlistenPromise.then(fn => fn && fn()); };
   },
   // RACE FIX (L7 #5): warning event fires 30s before autolock so the frontend
   // can auto-save any open form and show a "Sessione in scadenza" notice.
   onVaultWarning: (cb) => {
-    if (!listen) return () => {};
     const unlistenPromise = listen('lf-vault-warning', () => cb()).catch(() => null);
     return () => { unlistenPromise.then(fn => fn && fn()); };
   },
@@ -159,15 +153,16 @@ Object.freeze(window.api);
 if (listen) {
   listen('show-notification', async (event) => {
     try {
-      // In-app: use browser Notification API only as a last resort
-      // (e.g. on platforms where native plugin doesn't work)
-      // On macOS/Windows, the backend native notification is already shown,
-      // so we skip to avoid double-notification.
-      const notificationAPI = window.__TAURI__?.notification ?? null;
-      if (notificationAPI) {
-        // Tauri native plugin is available → backend already sent the notification natively.
-        // Nothing to do here — no duplicate.
-        return;
+      // In-app: the backend native notification is already shown via Tauri plugin.
+      // We only need fallback for web-only dev mode.
+      try {
+        const granted = await notifPermGranted();
+        if (granted) {
+          // Tauri native plugin is available — backend already sent the notification.
+          return;
+        }
+      } catch (_) {
+        // Plugin not available (web-only dev mode) — fall through to browser API
       }
       // Fallback for web-only mode (dev server without Tauri runtime)
       if (window.Notification) {

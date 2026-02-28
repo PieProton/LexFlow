@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Toaster } from 'react-hot-toast';
+import { Toaster, toast } from 'react-hot-toast';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { Lock } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { Lock, CheckCircle2, AlertCircle, Loader2, Info } from 'lucide-react';
 
 // Componenti
 import LoginScreen from './components/LoginScreen';
@@ -254,14 +253,12 @@ export default function App() {
 
     // Request notification permission on first unlock (macOS requires explicit grant)
     try {
-      const notifAPI = window.__TAURI__?.notification;
-      if (notifAPI) {
-        const granted = await notifAPI.isPermissionGranted();
-        if (!granted) {
-          await notifAPI.requestPermission();
-        }
+      const { isPermissionGranted, requestPermission } = await import('@tauri-apps/plugin-notification');
+      const granted = await isPermissionGranted();
+      if (!granted) {
+        await requestPermission();
       }
-    } catch (e) { /* ignore — notification permission is non-critical */ }
+    } catch (e) { /* ignore -- notification permission is non-critical */ }
   };
 
   // E2E bypass: when testing, make it easy to skip the login gate.
@@ -395,38 +392,50 @@ export default function App() {
           <WindowControls />
           <Toaster
             position="bottom-right"
+            containerStyle={{ bottom: 24, right: 24 }}
+            gutter={10}
             toastOptions={{
-              // base class so we can target in CSS, plus inline style fallback
               className: 'lexflow-toast',
               style: {
-                background: 'rgba(19,20,30,0.9)',
+                background: 'rgba(14,15,22,0.92)',
                 color: '#e2e4ef',
-                border: '1px solid rgba(34,38,58,0.6)',
+                border: '1px solid rgba(255,255,255,0.08)',
                 fontSize: '13px',
-                padding: '12px 14px',
-                borderRadius: '12px',
-                boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
+                fontWeight: 500,
+                padding: '14px 18px',
+                borderRadius: '14px',
+                boxShadow: '0 12px 40px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04) inset',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 12,
-                minWidth: 240,
+                gap: '12px',
+                minWidth: 260,
                 maxWidth: 420,
-                backdropFilter: 'blur(8px)',
-                WebkitBackdropFilter: 'blur(8px)'
+                backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)',
+                lineHeight: 1.4,
               },
               success: {
-                duration: 3500,
-                icon: null,
+                duration: 3000,
+                iconTheme: { primary: '#22c55e', secondary: 'transparent' },
+                icon: <CheckCircle2 size={18} style={{ color: '#22c55e', flexShrink: 0 }} />,
                 style: {
                   borderLeft: '3px solid #22c55e',
                 }
               },
               error: {
-                duration: 6000,
-                icon: '⚠️'
+                duration: 5000,
+                iconTheme: { primary: '#ef4444', secondary: 'transparent' },
+                icon: <AlertCircle size={18} style={{ color: '#ef4444', flexShrink: 0 }} />,
+                style: {
+                  borderLeft: '3px solid #ef4444',
+                }
               },
               loading: {
-                duration: 10000,
+                duration: 15000,
+                icon: <Loader2 size={18} className="animate-spin" style={{ color: '#d4a940', flexShrink: 0 }} />,
+                style: {
+                  borderLeft: '3px solid #d4a940',
+                }
               }
             }}
           />

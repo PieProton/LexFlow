@@ -1,1 +1,0 @@
-sh: line 1: 47925 Hangup: 1               npx tauri build > /tmp/tauri-build-fix5.log 2>&1

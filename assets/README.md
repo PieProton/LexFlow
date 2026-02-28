@@ -1,4 +1,4 @@
-# 🎨 Assets — LexFlow
+# Assets - LexFlow
 
 Questa cartella contiene le risorse sorgente dell'app.
 
@@ -14,4 +14,4 @@ Questa cartella contiene le risorse sorgente dell'app.
 python3 scripts/generate-icons.py
 ```
 
-> ⚠️ **NON modificare mai le icone in `src-tauri/icons/` a mano.**
+> **ATTENZIONE**: NON modificare mai le icone in `src-tauri/icons/` a mano.

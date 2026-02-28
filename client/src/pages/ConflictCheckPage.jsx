@@ -122,7 +122,7 @@ export default function ConflictCheckPage({ onSelectPractice }) {
               <AlertTriangle size={24} className="text-red-400" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-red-400">⚠️ Conflitto Potenziale</h3>
+              <h3 className="text-lg font-bold text-red-400">Conflitto Potenziale</h3>
               <p className="text-text-dim text-sm mt-1">
                 Trovate <span className="text-white font-bold">{practiceMatches.length}</span> pratiche e <span className="text-white font-bold">{contactMatches.length}</span> contatti corrispondenti a "<span className="text-white font-semibold">{query}</span>".
               </p>

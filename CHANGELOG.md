@@ -1,6 +1,64 @@
-# 📝 Changelog — LexFlow
+# Changelog -- LexFlow
 
-Formato: [SemVer](https://semver.org/) — `MAJOR.MINOR.PATCH`
+Formato: [SemVer](https://semver.org/) -- `MAJOR.MINOR.PATCH`
+
+---
+
+## [3.6.0] -- 2026-02-28
+
+### Security Audit (Gemini AI -- 20+ fix)
+
+#### Critici
+- **UB memory zeroing eliminato** -- Tutti i blocchi `unsafe { ptr.write_volatile(0) }` sostituiti con `zeroize_password()` (safe, via crate `zeroize`). Colpite: `unlock_vault`, `reset_vault`, `change_password`, `import_vault`
+- **change_password data loss race** -- Aggiunto `write_mutex`, backup `.vault.bak` prima della sequenza di rename, ordine vault-first
+- **Audit log silent destruction** -- File corrotto salvato come `.audit.corrupt` con evento TAMPER_DETECTED inserito
+- **AAD per AES-GCM** -- `encrypt_data`/`decrypt_data` ora usano `Payload` con `VAULT_MAGIC` come Additional Authenticated Data. Fallback backward-compatible per file senza AAD
+
+#### Sicurezza
+- **Hostname fragility fix** -- L'encryption key locale non dipende piu dall'hostname (volatile). Usa un machine-id persistente (256-bit random) con migrazione automatica silenziosa
+- **open_path RCE** -- Path sanitization: must exist, must be absolute, blocca URL/script/eseguibili
+- **Sentinel bypass fix** -- Quando il file `.burned-keys` manca ma il sentinel esiste, TUTTE le attivazioni vengono bloccate (non solo le nuove chiavi)
+- **withGlobalTauri=false** -- XSS non puo piu accedere a `invoke()` tramite namespace globale
+- **CSP aggiunta** -- `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'`
+- **tauri-api.js ES imports** -- Switch da `window.__TAURI__` a import ES module (`@tauri-apps/api`)
+- **bio_login password leak** -- Rimossi path legacy `res.password`/`res.pwd` dal frontend
+- **console.error sanitizzato** -- In produzione, errori loggati come `console.warn` senza stack trace
+- **fs scope ristretto** -- Capabilities limitano fs a `$APPDATA/**`
+
+#### Architettura
+- **Mutex poisoning protection** -- Tutti i `.lock().unwrap()` sostituiti con `.lock().unwrap_or_else(|e| e.into_inner())`
+- **DRY refactor** -- 6 helper centralizzati: `check_lockout()`, `record_failed_attempt()`, `clear_lockout()`, `atomic_write_with_sync()`, `authenticate_vault_password()`, `zeroize_password()`
+- **write_mutex su reset_vault e import_vault** -- Previene race condition su vault write concorrenti
+- **decrypt_local_with_migration()** -- Helper per decriptazione con fallback a chiave legacy e migrazione automatica. Usato in: `get_settings`, `check_license`, `load_burned_keys`, `read_notification_schedule`
+- **atomic_write_with_sync()** -- Usato in: `save_settings`, `sync_notification_schedule`, `burn_key`, `activate_license` (license + sentinel)
+
+---
+
+## [3.5.2] -- 2026-02-28
+
+### Fix (Critici — Sicurezza)
+
+#### Biometria non richiesta al login
+- **Stale closure fix** — `handleBioLogin` era catturata come closure stale nei `useEffect` di init e autolock. Ora usa `useRef` (`handleBioLoginRef`) per chiamare sempre la versione più recente
+- **Double-trigger guard** — Aggiunto `bioInFlight` ref per prevenire chiamate concorrenti alla biometria (es. StrictMode, double-mount, focus+visibility race)
+- **Verify-tag check in `bio_login`** — Il backend macOS/Windows ora verifica la chiave derivata dalla password keyring contro `vault.verify` PRIMA di accettarla. Se la password nel keyring è stale (utente ha cambiato password), la biometria viene disabilitata automaticamente e l'utente viene informato
+- **Auto-clear stale bio** — Se la password biometrica non corrisponde più, le credenziali keyring e il marker `.bio-enabled` vengono cancellati per evitare loop di errore
+
+#### Chiave privata riutilizzabile (CRITICO)
+- **Burn-hash machine-independent** — Il burn-hash ora è calcolato come `SHA256("BURN-GLOBAL-V2:<token>")` senza il machine fingerprint. Questo impedisce di riutilizzare la stessa chiave su una macchina diversa
+- **Backward compatibility** — `is_key_burned()` controlla sia il nuovo hash v2 che il legacy (fingerprint-salted) per non invalidare chiavi già bruciate
+- **Tamper detection** — Se il file `.burned-keys` viene eliminato ma il sentinel esiste, l'attivazione di QUALSIASI nuova chiave viene bloccata con errore "Registro chiavi compromesso"
+- **Anti-replay nonce** — Il payload della licenza ora include un nonce a 128-bit (`"n"` field) che rende ogni chiave univoca anche con stessi dati cliente/scadenza
+- **`LicensePayload` aggiornato** — Campo `n: Option<String>` aggiunto con `#[serde(default)]` per backward compatibility con token v1
+
+### Aggiunto
+- **`generate_license_v2.py`** — Nuovo script di generazione licenze con registro crittografato (AES-256-GCM + Scrypt) di tutte le chiavi emesse. Comandi: `generate`, `list`, `verify`, `export`, `stats`
+- **Registro chiavi locale** — File `.lexflow-issued-keys.enc` traccia ogni chiave emessa con: ID, cliente, data emissione, scadenza, burn-hash, stato. Protetto da password
+- **`compute_burn_hash_legacy()`** — Funzione helper per compatibilità con vecchi burn-hash (fingerprint-salted)
+
+### Modifiche
+- **`generate_license.py`** — Aggiunto nonce anti-replay nel payload
+- **`.gitignore`** — Esclusi file registro chiavi (`scripts/.lexflow-issued-keys.enc`, `scripts/.lexflow-registry-salt`, `scripts/lexflow-keys-export.csv`)
 
 ---
 
@@ -34,7 +92,7 @@ Formato: [SemVer](https://semver.org/) — `MAJOR.MINOR.PATCH`
 
 ## [3.0.0] — 2026-02-26
 
-### ⚠️ Breaking Changes
+### Breaking Changes
 - **Rotazione chiavi Ed25519** — Nuova coppia di chiavi per firma licenze (le vecchie licenze non sono più valide)
 
 ### Aggiunto

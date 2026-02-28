@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "LexFlow",
-  "version": "3.5.1",
+  "version": "3.6.0",
   "identifier": "com.pietrolongo.lexflow",
   "build": {
     "frontendDist": "../client/dist",
@@ -10,7 +10,10 @@
     "beforeBuildCommand": "cd client && npm run build"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:"
+    },
     "macOSPrivateApi": true,
     "windows": [
       {
@@ -53,7 +56,7 @@
     },
     "android": {
       "minSdkVersion": 24,
-      "versionCode": 350
+      "versionCode": 360
     },
     "windows": {
       "webviewInstallMode": {

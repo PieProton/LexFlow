@@ -710,54 +710,47 @@
   }
 }
 
-/* ── Toasts (react-hot-toast) — palette and cross-platform look ── */
+/* ── Toasts (react-hot-toast) — premium glass design ── */
 .lexflow-toast {
   display: flex !important;
   align-items: center;
   gap: 12px;
-  padding: 12px 14px !important;
-  border-radius: 12px !important;
+  padding: 14px 18px !important;
+  border-radius: 14px !important;
   color: #e2e4ef !important;
   font-size: 13px !important;
-  min-width: 240px !important;
-  max-width: 480px !important;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.45) !important;
-  border: 1px solid rgba(34,38,58,0.6) !important;
-  background: rgba(19,20,30,0.9) !important; /* fallback */
+  font-weight: 500 !important;
+  line-height: 1.4 !important;
+  min-width: 260px !important;
+  max-width: 420px !important;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04) inset !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  background: rgba(14,15,22,0.92) !important;
 }
 
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   .lexflow-toast {
-    background: rgba(19,20,30,0.55) !important;
-    -webkit-backdrop-filter: blur(8px) !important;
-    backdrop-filter: blur(8px) !important;
-    border: 1px solid rgba(255,255,255,0.06) !important;
+    background: rgba(14,15,22,0.78) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(1.4) !important;
+    backdrop-filter: blur(16px) saturate(1.4) !important;
   }
 }
 
-.lexflow-toast .icon {
-  display: inline-flex;
+/* Toast icon container — Lucide icons */
+.lexflow-toast > div[role="status"] {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 9px;
-  flex: 0 0 36px;
-  font-size: 16px;
+  flex-shrink: 0;
 }
-
-.lexflow-toast .message {
-  flex: 1 1 auto;
-  line-height: 1.2;
-}
-
-/* Variants */
-.lexflow-toast--success { border-left: 4px solid #10b981 !important; }
-.lexflow-toast--error   { border-left: 4px solid #f87171 !important; }
-.lexflow-toast--info    { border-left: 4px solid #3b82f6 !important; }
 
 /* Accessibility: larger tap targets on mobile */
 @media (max-width: 1024px) {
-  .lexflow-toast { min-width: 90% !important; max-width: 90% !important; border-radius: 10px !important; }
+  .lexflow-toast {
+    min-width: calc(100vw - 48px) !important;
+    max-width: calc(100vw - 48px) !important;
+    border-radius: 12px !important;
+    font-size: 14px !important;
+    padding: 16px 20px !important;
+  }
 }
 

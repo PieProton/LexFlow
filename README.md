@@ -1,14 +1,14 @@
-# ⚖️ LexFlow
+# LexFlow
 
 > Gestionale Studio Legale con Crittografia Zero-Knowledge
 
-**Versione:** 2.7.0  
+**Versione:** 3.5.2  
 **Piattaforma:** Tauri v2 (macOS, Windows, Android)  
 **Bundle ID:** `com.pietrolongo.lexflow`
 
 ---
 
-## ✨ Funzionalità
+## Funzionalità
 
 - **Gestione Pratiche** — crea, archivia e monitora fascicoli legali
 - **Scadenzario** — deadline, udienze, termini processuali
@@ -19,7 +19,7 @@
 - **Tray icon** — resta attiva in background
 - **Multilingua** — italiano/inglese (i18next)
 
-## 🛠 Stack Tecnologico
+## Stack Tecnologico
 
 | Layer | Tecnologia |
 |---|---|
@@ -40,8 +40,7 @@ LexFlow/
 │   ├── src/
 │   │   ├── components/
 │   │   ├── pages/
-│   │   ├── utils/
-│   │   └── api.js
+│   │   └── utils/
 │   └── public/
 ├── src-tauri/           ← Backend Rust + Tauri v2
 │   ├── src/lib.rs
@@ -50,7 +49,7 @@ LexFlow/
 └── releases/
 ```
 
-## 🚀 Sviluppo
+## Sviluppo
 
 ```bash
 npm run dev          # Avvia dev
