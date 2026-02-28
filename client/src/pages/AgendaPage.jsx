@@ -487,17 +487,10 @@ function TodayView({ events, onToggle, onEdit, onAdd, onSave, activeFilters }) {
                           onClick={e => {
                             // Non aprire edit se abbiamo appena draggato
                             if (e.currentTarget._didDrag) { e.currentTarget._didDrag = false; return; }
-                            // Alt+click → duplica
-                            if (e.altKey) {
-                              e.stopPropagation();
-                              const dup = { ...ev, id: genId(), title: ev.title + ' (copia)', completed: false };
-                              onSave(dup);
-                              toast.success('Impegno duplicato');
-                              return;
-                            }
+                            if (e.currentTarget._didLongPress) { e.currentTarget._didLongPress = false; return; }
                             onEdit(ev);
                           }}
-                          className={`agenda-event absolute rounded-lg px-3 py-1.5 cursor-grab transition-all duration-200 hover:scale-[1.01] hover:z-20
+                          className={`agenda-event absolute rounded-lg px-3 py-1.5 cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-black/20 hover:z-20
                               ${ev.category === 'udienza' ? 'bg-[#d4a940]/20 border-l-4 border-[#d4a940]' : ''}
                               ${ev.category === 'scadenza' ? 'bg-[#EF6B6B]/20 border-l-4 border-[#EF6B6B]' : ''}
                               ${!isSpecial ? 'bg-white/[0.08] hover:bg-white/[0.12] border-l-4 border-white/20' : ''}
@@ -513,6 +506,7 @@ function TodayView({ events, onToggle, onEdit, onAdd, onSave, activeFilters }) {
                           }}
                           onMouseDown={e => {
                             // Drag verticale per spostare l'evento (cambio orario)
+                            // Long-press (500ms) per duplicare
                             if (e.target.closest('.resize-handle') || e.target.closest('button')) return;
                             const startY = e.clientY;
                             const origStart = ev.startMin;
@@ -520,30 +514,88 @@ function TodayView({ events, onToggle, onEdit, onAdd, onSave, activeFilters }) {
                             const el = e.currentTarget;
                             let moved = false;
                             let newStart = origStart;
+                            let longPressTimer = null;
+                            let isDuplicate = false;
+
+                            // Long-press timer: tieni premuto 500ms per duplicare
+                            longPressTimer = setTimeout(() => {
+                              isDuplicate = true;
+                              el.style.opacity = '0.5';
+                              // Crea ghost clone visivo
+                              const ghost = el.cloneNode(true);
+                              ghost.id = 'drag-ghost';
+                              ghost.style.position = 'absolute';
+                              ghost.style.top = el.style.top;
+                              ghost.style.left = el.style.left;
+                              ghost.style.right = el.style.right;
+                              ghost.style.width = el.style.width;
+                              ghost.style.height = el.style.height;
+                              ghost.style.zIndex = '60';
+                              ghost.style.opacity = '0.9';
+                              ghost.style.border = '2px dashed rgba(212,169,64,0.6)';
+                              ghost.style.pointerEvents = 'none';
+                              ghost.style.cursor = 'copy';
+                              el.parentElement.appendChild(ghost);
+                              document.body.style.cursor = 'copy';
+                            }, 500);
+
                             const onMove = (me) => {
                               const deltaY = me.clientY - startY;
                               if (!moved && Math.abs(deltaY) < 4) return; // deadzone
                               if (!moved) {
                                 moved = true;
+                                // Se non è ancora long-press, cancella il timer (è un drag normale)
+                                if (!isDuplicate && longPressTimer) {
+                                  clearTimeout(longPressTimer);
+                                  longPressTimer = null;
+                                }
                                 el.style.zIndex = 50;
-                                el.style.opacity = '0.8';
                                 el.style.transition = 'none';
-                                el.style.cursor = 'grabbing';
+                                if (!isDuplicate) {
+                                  el.style.opacity = '0.8';
+                                  document.body.style.cursor = 'grabbing';
+                                }
                               }
                               const deltaMin = Math.round(deltaY / 1); // 1px = 1min
                               newStart = Math.max(0, Math.min(origStart + deltaMin, 1440 - duration));
                               // Snap a 5 minuti
                               newStart = Math.round(newStart / 5) * 5;
-                              el.style.top = `${(newStart / 60) * 60}px`;
+                              if (isDuplicate) {
+                                const ghost = document.getElementById('drag-ghost');
+                                if (ghost) ghost.style.top = `${(newStart / 60) * 60}px`;
+                              } else {
+                                el.style.top = `${(newStart / 60) * 60}px`;
+                              }
                             };
                             const onUp = () => {
                               document.removeEventListener('mousemove', onMove);
                               document.removeEventListener('mouseup', onUp);
+                              if (longPressTimer) clearTimeout(longPressTimer);
+                              document.body.style.cursor = '';
+                              // Rimuovi ghost
+                              const ghost = document.getElementById('drag-ghost');
+                              if (ghost) ghost.remove();
                               el.style.zIndex = '';
                               el.style.opacity = '';
                               el.style.transition = '';
-                              el.style.cursor = '';
-                              if (moved) {
+
+                              if (isDuplicate && moved) {
+                                // Duplica l'evento nella nuova posizione
+                                el._didDrag = true;
+                                el._didLongPress = true;
+                                const sh = Math.floor(newStart / 60);
+                                const sm = newStart % 60;
+                                const newEnd = newStart + duration;
+                                const eh = Math.floor(newEnd / 60);
+                                const em = newEnd % 60;
+                                const dup = { ...ev, id: genId(), timeStart: fmtTime(sh, sm), timeEnd: fmtTime(eh, em), completed: false, title: ev.title };
+                                onSave(dup);
+                              } else if (isDuplicate && !moved) {
+                                // Long press senza movimento — duplica in posto
+                                el._didLongPress = true;
+                                const dup = { ...ev, id: genId(), title: ev.title + ' (copia)', completed: false };
+                                onSave(dup);
+                              } else if (moved) {
                                 el._didDrag = true;
                                 if (newStart !== origStart) {
                                   const sh = Math.floor(newStart / 60);
@@ -740,7 +792,7 @@ function WeekView({ events, onEdit, onAdd, onSave, activeFilters }) {
                     const height = Math.max(((eh*60+em-sh*60-sm)/60)*60, 20);
                     const isUdienza = ev.category === 'udienza';
                     return (
-                      <div key={ev.id} className="week-ev agenda-event absolute left-0.5 right-0.5 rounded px-1.5 py-0.5 cursor-grab text-white overflow-hidden"
+                      <div key={ev.id} className="week-ev agenda-event absolute left-0.5 right-0.5 rounded px-1.5 py-0.5 cursor-pointer text-white overflow-hidden"
                         style={{
                             top, height, fontSize: 10,
                             background: isUdienza ? CAT_COLORS.udienza : `${CAT_COLORS[ev.category]}CC`,
@@ -750,12 +802,7 @@ function WeekView({ events, onEdit, onAdd, onSave, activeFilters }) {
                         onClick={e => {
                           e.stopPropagation();
                           if (e.currentTarget._didDrag) { e.currentTarget._didDrag = false; return; }
-                          if (e.altKey) {
-                            const dup = { ...ev, id: genId(), title: ev.title + ' (copia)', completed: false };
-                            onSave(dup);
-                            toast.success('Impegno duplicato');
-                            return;
-                          }
+                          if (e.currentTarget._didLongPress) { e.currentTarget._didLongPress = false; return; }
                           onEdit(ev);
                         }}
                         onMouseDown={e => {
@@ -773,29 +820,70 @@ function WeekView({ events, onEdit, onAdd, onSave, activeFilters }) {
                           let moved = false;
                           let newDate = origDate;
                           let newStartMin = origStartMin;
+                          let longPressTimer = null;
+                          let isDuplicate = false;
                           // Get all day columns for horizontal drag
                           const dayCols = grid ? Array.from(grid.querySelectorAll('[data-daystr]')) : [];
+
+                          // Long-press timer: 500ms per duplicare
+                          longPressTimer = setTimeout(() => {
+                            isDuplicate = true;
+                            el.style.opacity = '0.5';
+                            document.body.style.cursor = 'copy';
+                            // Crea ghost clone
+                            const ghost = el.cloneNode(true);
+                            ghost.id = 'week-drag-ghost';
+                            ghost.style.position = 'absolute';
+                            ghost.style.top = el.style.top;
+                            ghost.style.left = el.style.left || '2px';
+                            ghost.style.right = el.style.right || '2px';
+                            ghost.style.height = el.style.height;
+                            ghost.style.zIndex = '60';
+                            ghost.style.opacity = '0.9';
+                            ghost.style.border = '2px dashed rgba(212,169,64,0.6)';
+                            ghost.style.pointerEvents = 'none';
+                            el.parentElement.appendChild(ghost);
+                          }, 500);
+
                           const onMove = (me) => {
                             const dX = me.clientX - startX;
                             const dY = me.clientY - startY;
                             if (!moved && Math.abs(dX) < 4 && Math.abs(dY) < 4) return;
                             if (!moved) {
                               moved = true;
+                              if (!isDuplicate && longPressTimer) {
+                                clearTimeout(longPressTimer);
+                                longPressTimer = null;
+                              }
                               el.style.zIndex = 50;
-                              el.style.opacity = '0.8';
                               el.style.transition = 'none';
-                              el.style.cursor = 'grabbing';
+                              if (!isDuplicate) {
+                                el.style.opacity = '0.8';
+                                document.body.style.cursor = 'grabbing';
+                              }
                             }
                             // Vertical: change time
                             const deltaMin = Math.round(dY / 1);
                             newStartMin = Math.max(0, Math.min(origStartMin + deltaMin, 1440 - duration));
                             newStartMin = Math.round(newStartMin / 5) * 5;
-                            el.style.top = `${(newStartMin / 60) * 60}px`;
+                            if (isDuplicate) {
+                              const ghost = document.getElementById('week-drag-ghost');
+                              if (ghost) ghost.style.top = `${(newStartMin / 60) * 60}px`;
+                            } else {
+                              el.style.top = `${(newStartMin / 60) * 60}px`;
+                            }
                             // Horizontal: detect which day column we're over
                             for (const col of dayCols) {
                               const r = col.getBoundingClientRect();
                               if (me.clientX >= r.left && me.clientX <= r.right) {
                                 newDate = col.dataset.daystr;
+                                // Move ghost to new column if duplicating
+                                if (isDuplicate) {
+                                  const ghost = document.getElementById('week-drag-ghost');
+                                  if (ghost && ghost.parentElement !== col) {
+                                    col.appendChild(ghost);
+                                  }
+                                }
                                 break;
                               }
                             }
@@ -803,11 +891,29 @@ function WeekView({ events, onEdit, onAdd, onSave, activeFilters }) {
                           const onUp = () => {
                             document.removeEventListener('mousemove', onMove);
                             document.removeEventListener('mouseup', onUp);
+                            if (longPressTimer) clearTimeout(longPressTimer);
+                            document.body.style.cursor = '';
+                            const ghost = document.getElementById('week-drag-ghost');
+                            if (ghost) ghost.remove();
                             el.style.zIndex = '';
                             el.style.opacity = '';
                             el.style.transition = '';
-                            el.style.cursor = '';
-                            if (moved) {
+
+                            if (isDuplicate && (moved || newDate !== origDate)) {
+                              el._didDrag = true;
+                              el._didLongPress = true;
+                              const nsh = Math.floor(newStartMin / 60);
+                              const nsm = newStartMin % 60;
+                              const newEndMin = newStartMin + duration;
+                              const neh = Math.floor(newEndMin / 60);
+                              const nem = newEndMin % 60;
+                              const dup = { ...ev, id: genId(), date: newDate, timeStart: fmtTime(nsh, nsm), timeEnd: fmtTime(neh, nem), completed: false };
+                              onSave(dup);
+                            } else if (isDuplicate && !moved) {
+                              el._didLongPress = true;
+                              const dup = { ...ev, id: genId(), title: ev.title + ' (copia)', completed: false };
+                              onSave(dup);
+                            } else if (moved) {
                               el._didDrag = true;
                               if (newStartMin !== origStartMin || newDate !== origDate) {
                                 const nsh = Math.floor(newStartMin / 60);
@@ -1012,7 +1118,6 @@ function NotificationSettingsPopup({ settings, agendaEvents, onSave, onClose }) 
         }));
       await window.api.syncNotificationSchedule({ briefingTimes, items });
       onSave(updated);
-      toast.success('Impostazioni avvisi salvate');
       onClose();
     } catch (e) {
       toast.error('Errore nel salvataggio');
@@ -1117,10 +1222,10 @@ export default function AgendaPage({ agendaEvents, onSaveAgenda, practices, onSe
 
   const handleSave = (ev) => {
     const updated = events.some(e => e.id === ev.id) ? events.map(e => e.id === ev.id ? ev : e) : [...events, ev];
-    onSaveAgenda(updated); setModalEvent(null); toast.success('Agenda aggiornata');
+    onSaveAgenda(updated); setModalEvent(null);
   };
 
-  const handleDelete = (id) => { onSaveAgenda(events.filter(e => e.id !== id)); setModalEvent(null); toast.success('Eliminato'); };
+  const handleDelete = (id) => { onSaveAgenda(events.filter(e => e.id !== id)); setModalEvent(null); };
   const handleToggle = (id) => onSaveAgenda(events.map(e => e.id === id ? {...e, completed: !e.completed} : e));
   const openAdd = (date, tS, tE) => {
     // Ora attuale arrotondata ai prossimi 30 min

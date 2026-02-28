@@ -2630,23 +2630,12 @@ pub fn run() {
             // ── DESKTOP: App Nap prevention + async cron job ──────────────────
             #[cfg(target_os = "macos")]
             {
-                // Prevent macOS App Nap from freezing the async timer when the
-                // window is hidden/unfocused.  We use NSProcessInfo FFI to declare
-                // a "user-initiated" activity that keeps the process alive.
-                use objc::{msg_send, sel, sel_impl, class};
-                use cocoa::foundation::NSString as NSStringTrait;
-                unsafe {
-                    let info: *mut objc::runtime::Object = msg_send![class!(NSProcessInfo), processInfo];
-                    let reason = cocoa::foundation::NSString::alloc(cocoa::base::nil)
-                        .init_str("LexFlow notification cron job must not be suspended");
-                    // NSActivityUserInitiated | NSActivityIdleSystemSleepDisabled = 0x00FFFFFF
-                    let _activity: *mut objc::runtime::Object = msg_send![info,
-                        beginActivityWithOptions: 0x00FFFFFFu64
-                        reason: reason
-                    ];
-                    // We intentionally leak _activity — it must live for the entire process lifetime.
-                    eprintln!("[LexFlow] macOS App Nap disabled via NSProcessInfo ✓");
-                }
+                // Disable App Nap via defaults write — clean approach, no objc/cocoa FFI needed
+                let bundle_id = app.config().identifier.clone();
+                let _ = std::process::Command::new("defaults")
+                    .args(["write", &bundle_id, "NSAppSleepDisabled", "-bool", "YES"])
+                    .output();
+                eprintln!("[LexFlow] macOS App Nap disabled via defaults write ✓");
             }
 
             // Launch the desktop cron job (single async task, zero threads)

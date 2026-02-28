@@ -56,10 +56,7 @@ mobile = []
 open = "5"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 
-# macOS-only: App Nap prevention via NSProcessInfo FFI
-[target.'cfg(target_os = "macos")'.dependencies]
-objc = "0.2.7"
-cocoa = "0.24.1"
+# macOS-only: (no extra deps needed — App Nap disabled via defaults write)
 
 # time crate: needed by tauri-plugin-notification Schedule::At (OffsetDateTime)
 [dependencies.time]

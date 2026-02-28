@@ -37,6 +37,7 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
   const [resetError, setResetError] = useState('');
   
   const bioTriggered = useRef(false);
+  const bioAutoTriggeredOnReturn = useRef(false);
   const MAX_BIO_ATTEMPTS = 3;
 
   useEffect(() => {
@@ -69,17 +70,16 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
             setBioSaved(saved);
 
             // Auto-trigger biometria SOLO all'avvio manuale (non dopo autolock).
-            // Dopo autolock l'utente sta lavorando su altro — un popup biometrico
-            // di sistema ruberebbe il focus ed è disturbante. Il pulsante "Accedi
-            // con Biometria" resta visibile per sbloccare quando l'utente torna.
+            // Dopo autolock, la biometria si trigghera al ritorno sulla finestra
+            // (visibilitychange) — così non disturbiamo l'utente su altre app.
             if (saved && !bioTriggered.current && !autoLocked) {
               bioTriggered.current = true;
               // Nascondi il form mentre il popup biometrico di sistema appare
               setShowPasswordField(false);
               setTimeout(() => handleBioLogin(true), 400);
             } else if (saved && autoLocked) {
-              // Autolock: mostra il pulsante biometria, ma NON triggera il popup.
-              // L'utente cliccherà quando torna a usare l'app.
+              // Autolock: mostra il pulsante biometria, NON triggera il popup.
+              // Il trigger avverrà via visibilitychange quando l'utente torna.
               setShowPasswordField(false);
             } else if (!saved) {
               setShowPasswordField(true);
@@ -99,6 +99,43 @@ export default function LoginScreen({ onUnlock, autoLocked = false }) {
 
     init();
   }, []);
+
+  // ─── Auto-trigger biometria quando l'utente torna sulla finestra (autolock) ──
+  useEffect(() => {
+    // Solo se: autoLocked + biometria disponibile e salvata + pochi tentativi falliti
+    if (!autoLocked || !bioAvailable || !bioSaved || bioFailed >= MAX_BIO_ATTEMPTS) return;
+    if (isNew) return;
+
+    const handleVisibility = () => {
+      // document.visibilityState === 'visible' → l'utente è tornato su LexFlow
+      if (document.visibilityState === 'visible' && !bioAutoTriggeredOnReturn.current && !showPasswordField) {
+        bioAutoTriggeredOnReturn.current = true;
+        // Breve delay per dare tempo al focus della finestra
+        setTimeout(() => handleBioLogin(true), 300);
+      }
+    };
+
+    // Se la finestra è già visibile (l'utente è davanti a LexFlow), triggera subito
+    if (document.visibilityState === 'visible' && !bioAutoTriggeredOnReturn.current && !showPasswordField) {
+      bioAutoTriggeredOnReturn.current = true;
+      setTimeout(() => handleBioLogin(true), 600);
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    // Anche su focus della finestra (più affidabile su macOS con Tauri)
+    const handleFocus = () => {
+      if (!bioAutoTriggeredOnReturn.current && !showPasswordField) {
+        bioAutoTriggeredOnReturn.current = true;
+        setTimeout(() => handleBioLogin(true), 300);
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [autoLocked, bioAvailable, bioSaved, bioFailed, isNew, showPasswordField]);
 
   // ─── Countdown timer per lockout brute-force ───────────────────────────────
   useEffect(() => {

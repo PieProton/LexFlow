@@ -179,8 +179,8 @@ function DesktopSidebar({ version, onLock }) {
         </div>
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 px-4 py-2 space-y-5 overflow-y-auto custom-scrollbar">
+      {/* Nav — scrollbar adattiva: visibile solo su hover se serve */}
+      <nav className="flex-1 px-4 py-2 space-y-5 overflow-y-auto sidebar-scroll">
         {sections.map((section, i) => (
           <div key={i} className="space-y-1">
             {section.title && (

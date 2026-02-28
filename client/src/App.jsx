@@ -54,6 +54,7 @@ export default function App() {
   // --- STATI DEI DATI & NOTIFICHE ---
   const [practices, setPractices] = useState([]);
   const [agendaEvents, setAgendaEvents] = useState([]);
+  const agendaRef = React.useRef([]);
   const [settings, setSettings] = useState({});
   const [selectedId, setSelectedId] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -171,7 +172,7 @@ export default function App() {
         syncedEvents.push({
           // Valori default per nuovi eventi
           id: syncId,
-          title: `📋 ${d.label}`,
+          title: d.label,
           date: d.date,
           timeStart: '09:00',
           timeEnd: '10:00',
@@ -207,6 +208,7 @@ export default function App() {
       setSettings(currentSettings);
       const synced = syncDeadlinesToAgenda(pracs, agenda);
       setAgendaEvents(synced);
+      agendaRef.current = synced;
       
       await window.api.saveAgenda(synced);
 
@@ -280,8 +282,9 @@ export default function App() {
     setPractices(newList);
     if (window.api?.savePractices) {
       await window.api.savePractices(newList);
-      const synced = syncDeadlinesToAgenda(newList, agendaEvents);
+      const synced = syncDeadlinesToAgenda(newList, agendaRef.current);
       setAgendaEvents(synced);
+      agendaRef.current = synced;
       await window.api.saveAgenda(synced);
       // Sync schedule col backend (include scadenze fascicoli aggiornate)
       syncScheduleToBackend(synced, newList);
@@ -290,6 +293,7 @@ export default function App() {
 
   const saveAgenda = async (newEvents) => {
     setAgendaEvents(newEvents);
+    agendaRef.current = newEvents;
     if (window.api?.saveAgenda) await window.api.saveAgenda(newEvents);
     // Sync notification schedule with updated items for backend scheduler
     syncScheduleToBackend(newEvents, practices);
