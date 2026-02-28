@@ -200,11 +200,12 @@ jobs:
         run: npx tauri android build
 
       - name: Upload APK e AAB nella Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.create-release.outputs.tag }}
-          files: |
-            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
-            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+        run: |
+          APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -1)
+          AAB=$(find src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | head -1)
+          echo "APK: $APK"
+          echo "AAB: $AAB"
+          gh release upload "$TAG" "$APK" "$AAB" --clobber
