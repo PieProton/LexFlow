@@ -10,80 +10,23 @@ permissions:
   contents: write
 
 jobs:
-  create-release:
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.get-tag.outputs.tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Determina tag
-        id: get-tag
-        run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=v$(jq -r .version src-tauri/tauri.conf.json)" >> $GITHUB_OUTPUT
-          fi
+  # ============================================================
+  # STEP 1 — DESKTOP (macOS Universal DMG + Windows MSI)
+  # ============================================================
+  build-desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target universal-apple-darwin --bundles dmg
+            rust-targets: x86_64-apple-darwin,aarch64-apple-darwin
+          - platform: windows-latest
+            args: --target x86_64-pc-windows-msvc --bundles msi
+            rust-targets: x86_64-pc-windows-msvc
 
-      - name: Crea Release GitHub
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.get-tag.outputs.tag }}
-          name: "LexFlow ${{ steps.get-tag.outputs.tag }}"
-          body: |
-            ## LexFlow ${{ steps.get-tag.outputs.tag }}
-            Release multi-piattaforma ufficiale.
-          draft: false
-          prerelease: false
-
-  build-macos:
-    needs: create-release
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Rimuovi config cargo locale
-        run: rm -f src-tauri/.cargo/config.toml
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: "npm"
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin,aarch64-apple-darwin
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
-      - name: Installa dipendenze
-        run: |
-          npm install
-          cd client && npm install --legacy-peer-deps
-
-      - name: Build Tauri Universal DMG
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ needs.create-release.outputs.tag }}
-          releaseName: "LexFlow ${{ needs.create-release.outputs.tag }}"
-          releaseBody: ""
-          releaseDraft: false
-          prerelease: false
-          args: --target universal-apple-darwin --bundles dmg
-
-  build-windows:
-    needs: create-release
-    runs-on: windows-latest
+    runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -96,37 +39,40 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: "npm"
+          cache: npm
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.rust-targets }}
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: ./src-tauri -> target
 
       - name: Installa dipendenze
         run: |
           npm install
           cd client && npm install --legacy-peer-deps
 
-      - name: Build Tauri Windows MSI
+      - name: Build e Pubblica
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ needs.create-release.outputs.tag }}
-          releaseName: "LexFlow ${{ needs.create-release.outputs.tag }}"
-          releaseBody: ""
+          tagName: ${{ github.ref_name }}
+          releaseName: "LexFlow ${{ github.ref_name }}"
+          releaseBody: "Release ufficiale multi-piattaforma di LexFlow."
           releaseDraft: false
           prerelease: false
-          args: --target x86_64-pc-windows-msvc --bundles msi
+          args: ${{ matrix.args }}
 
+  # ============================================================
+  # STEP 2 — ANDROID (parte solo dopo che desktop è completato)
+  # ============================================================
   build-android:
-    needs: create-release
+    needs: build-desktop
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -143,7 +89,7 @@ jobs:
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
-          distribution: "zulu"
+          distribution: zulu
           java-version: "17"
 
       - name: Setup Android SDK
@@ -163,7 +109,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: ./src-tauri -> target
 
       - name: Installa dipendenze
         run: |
@@ -202,10 +148,10 @@ jobs:
       - name: Upload APK e AAB nella Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.create-release.outputs.tag }}
         run: |
+          TAG="${{ github.ref_name }}"
           APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" | head -1)
           AAB=$(find src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | head -1)
-          echo "APK: $APK"
-          echo "AAB: $AAB"
+          echo "Uploading: $APK"
+          echo "Uploading: $AAB"
           gh release upload "$TAG" "$APK" "$AAB" --clobber
